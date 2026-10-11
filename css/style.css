@@ -1389,3 +1389,68 @@ kbd { padding: 1px 5px; border: 1px solid var(--line-2); border-bottom-width: 2p
   .pw-grid, .net-form { grid-template-columns: 1fr; }
   .intro-pane, .intro-tabs { padding-left: 18px; padding-right: 18px; margin-left: 0; margin-right: 0; }
 }
+
+/* ============================================================
+   АРМИИ И ФРОНТ
+   ============================================================ */
+/* Фишка армии на глобусе (позиционирует globe.gl) */
+.army-cnt {
+  --pc: #c8141e;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 46px;
+  height: 22px;
+  padding: 0 5px 3px 4px;
+  position: relative;
+  background: rgba(6, 10, 16, 0.92);
+  border: 1.5px solid var(--pc);
+  border-radius: 2px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  font: 700 12px var(--font-c);
+  color: #fff;
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+.army-cnt .nato { width: 16px; height: 11px; flex: none; fill: color-mix(in srgb, var(--pc) 45%, transparent); stroke: #e8eef5; stroke-width: 1; }
+.army-cnt b { font-variant-numeric: tabular-nums; }
+.army-cnt .org { position: absolute; left: 2px; right: 2px; bottom: 2px; height: 2px; background: rgba(255, 255, 255, 0.15); }
+.army-cnt .org i { display: block; height: 100%; background: var(--green); }
+.army-cnt:hover { box-shadow: 0 0 0 2px rgba(255, 230, 128, 0.6), 0 2px 8px rgba(0, 0, 0, 0.7); }
+.army-cnt.sel { border-color: #ffe680; box-shadow: 0 0 0 2px #ffe680, 0 0 16px rgba(255, 230, 128, 0.6); }
+.army-cnt.attacking { animation: armyAttack 1.2s ease-in-out infinite; }
+.army-cnt.moving { border-style: dashed; }
+.army-cnt.foreign { cursor: help; opacity: 0.95; }
+@keyframes armyAttack { 50% { box-shadow: 0 0 0 3px rgba(255, 80, 50, 0.55), 0 2px 8px rgba(0, 0, 0, 0.7); } }
+
+/* Режим приказа: выбрана армия */
+body.army-mode #map-root { cursor: crosshair; }
+.army-hint { border-left-color: var(--gold); background: rgba(227, 180, 72, 0.08); }
+.army-flag svg { width: 30px; height: 21px; fill: rgba(255, 255, 255, 0.15); stroke: #fff; stroke-width: 1; }
+.battle-box { padding: 9px 11px; margin-bottom: 7px; border: 1px solid rgba(240, 138, 36, 0.4); background: rgba(240, 138, 36, 0.07); border-radius: 3px; display: flex; flex-direction: column; gap: 4px; }
+.battle-box .fc-row { font-size: 12px; }
+.fc-odds { font-weight: 600; }
+.fc-odds.good { color: var(--green); }
+.fc-odds.mid { color: var(--gold-2); }
+.fc-odds.bad { color: #ff7a70; }
+
+/* Карточки армий в нижней панели */
+.fc-army { border-top: 2px solid var(--green); }
+.fc-army.st-attack { border-top-color: var(--red-2); }
+.fc-army.st-move { border-top-color: var(--cyan); }
+.fc-army.sel { border-color: #ffe680; box-shadow: inset 0 0 0 1px #ffe680; background: rgba(255, 230, 128, 0.08); }
+.fc-nato { width: 16px; height: 11px; flex: none; fill: rgba(255, 255, 255, 0.12); stroke: #dfe6ee; stroke-width: 1; }
+.act-army { flex: 1; }
+#army-box .ab-main { gap: 10px; }
+
+/* Дерево фокусов на 9 колонок */
+.ft { width: calc(134px * 8 + 124px); height: calc(124px * 5 + 108px); }
+.fnode { left: calc(var(--x) * 134px); top: calc(var(--y) * 124px); width: 124px; height: 108px; padding: 7px 8px; }
+.fnode-name { font-size: 12px; }
+.fnode-desc { font-size: 10px; -webkit-line-clamp: 2; }
+.fnode-kind { font: 700 9px var(--font-c); letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold-2); }
+.fnode-path { border-color: rgba(227, 180, 72, 0.6); background: linear-gradient(180deg, rgba(227, 180, 72, 0.12), rgba(14, 20, 29, 0.97)); }
+.ft-excl { position: absolute; left: 0; right: 0; top: calc(2 * 124px - 20px); width: auto; text-align: center; }
+.ft-excl span { display: inline; font-size: 13px; margin-right: 6px; }

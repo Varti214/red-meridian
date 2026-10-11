@@ -15,6 +15,7 @@ const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V'];
 
 const UI = {
   selected: null,
+  selectedArmy: null,
   logFilter: 'all',
   logCollapsed: false,
   unread: 0,
@@ -156,7 +157,7 @@ const UI = {
       case 'speed-up': return this.setSpeed(Game.S.speed + 1);
       case 'speed-down': return this.setSpeed(Game.S.speed - 1);
       case 'menu': return this.openMenu();
-      case 'close-panel': return this.select(null);
+      case 'close-panel': return this.selectedArmy ? this.selectArmy(null) : this.select(null);
       case 'log-collapse': return this.toggleLog();
       case 'map-mode': return this.toggleMapMode();
       case 'modal-close': return this.closeModal();
@@ -177,7 +178,13 @@ const UI = {
       case 'influence': return run('influence', id);
       case 'integrate': return run('integrate', id);
       case 'spy': return run('spy', id, a.dataset.op);
-      case 'attack-plan': return this.openAttackPlanner(id);
+      case 'attack-plan': this.select(id, true); return;
+      case 'army-select': Sound.play('click'); this.selectArmy(a.dataset.army); return;
+      case 'army-attack': return run('orderAttack', a.dataset.army, id);
+      case 'army-hold': return run('orderHold', a.dataset.army);
+      case 'army-reinforce': return run('reinforceArmy', a.dataset.army, +a.dataset.n);
+      case 'army-disband': return run('disbandArmy', a.dataset.army).then(() => this.selectArmy(null));
+      case 'army-create': return Act.call('createArmy', +a.dataset.n).then(res => { this.result(res); if (res && res.army) this.selectArmy(res.army); });
       case 'nuke-plan': return this.openNukePlanner(id);
       case 'research': return run('startResearch', id);
       case 'focus-start': return run('startFocus', id);
@@ -201,6 +208,7 @@ const UI = {
     if (e.key === 'Escape') {
       e.preventDefault();
       if (this.modals.length) { const top = this.modals[this.modals.length - 1]; if (top.dismissible) this.closeModal(top); }
+      else if (this.selectedArmy) this.selectArmy(null);
       else if (this.selected) this.select(null);
       else if (this.started) this.openMenu();
       return;
@@ -244,6 +252,7 @@ const UI = {
 
   /* ---------------- ВЫБОР СТРАНЫ ---------------- */
   select(id, focusMap) {
+    if (id && this.selectedArmy) this.selectArmy(null);
     this.selected = id && Game.c(id) ? id : null;
     MapView.setSelected(this.selected);
     if (this.selected && focusMap) MapView.focus(this.selected);
@@ -251,7 +260,53 @@ const UI = {
     this.renderCountry();
   },
 
+  /* ---------------- АРМИИ: выбор и приказы ----------------
+     Клик по фишке — выбрать армию. Затем клик (или правый клик) по своей земле — марш,
+     по соседней вражеской — наступление. Esc или повторный клик по фишке — отменить выбор. */
+  armyClick(id, tag) {
+    if (this.modals.length || !this.started) return;
+    if (tag !== Game.me) {
+      const a = Game.army(id, tag);
+      if (a) this.toast(`${a.name} (${POWERS[tag].name}) — армия другой державы`, 'info');
+      return;
+    }
+    Sound.play('click');
+    this.selectArmy(this.selectedArmy === id ? null : id);
+  },
+
+  selectArmy(id) {
+    this.selectedArmy = id && Game.army(id) ? id : null;
+    MapView.setSelectedArmy(this.selectedArmy);
+    document.body.classList.toggle('army-mode', !!this.selectedArmy);
+    if (this.selectedArmy) { this.selected = null; MapView.setSelected(null); }
+    this.sig.country = null;
+    this.sig.dock = null;
+    this.renderCountry();
+    this.renderDock();
+  },
+
+  // Приказ выбранной армии: своя земля — марш, соседняя вражеская — наступление
+  issueOrder(targetId) {
+    const a = Game.army(this.selectedArmy);
+    const c = Game.c(targetId);
+    if (!a || !c) return;
+    if (c.ctrl === Game.me) {
+      Act.call('orderMove', a.id, c.id).then(res => this.result(res));
+    } else {
+      const why = Game.canOrderAttack(a, c);
+      if (why) { this.toast(why === 'Нет состояния войны' ? 'С этой страной нет войны — сначала обоснуйте и объявите её' : why, 'err'); Sound.play('error'); return; }
+      Act.call('orderAttack', a.id, c.id).then(res => this.result(res));
+    }
+  },
+
+  mapRight(id) {
+    if (this.modals.length || !this.started || !id) return;
+    if (this.selectedArmy) this.issueOrder(id);
+  },
+
   mapClick(id) {
+    if (this.selectedArmy && id && !this.modals.length) { this.issueOrder(id); return; }
+    if (this.selectedArmy && !id) { this.selectArmy(null); return; }
     if (this.modals.length || !this.started) return;
     if (id) Sound.play('click');
     this.select(id === this.selected ? null : id);
@@ -267,6 +322,8 @@ const UI = {
   /* ---------------- ОБНОВЛЕНИЕ КАЖДЫЙ ДЕНЬ ---------------- */
   onTick() {
     if (!this.P()) return;
+    if (this.selectedArmy && !Game.army(this.selectedArmy)) this.selectArmy(null);
+    MapView.refreshArmies();
     this.updateTopbar();
     this.updateClock();
     this.renderAll();
@@ -301,9 +358,10 @@ const UI = {
     set('res-mp', U.fmtMP(P.mp), U.signed(Game.dailyMP(), 1));
     set('res-rp', U.fmt(Math.floor(P.rp)), U.signed(Game.dailyRP(), 1));
     const training = P.training.reduce((s, t) => s + t.count, 0);
-    $('#res-div .res-val').textContent = U.fmt(P.divs) + (training ? ` +${training}` : '');
-    $('#res-div .res-org i').style.width = P.org + '%';
-    $('#res-div .res-org').classList.toggle('low', P.org < 35);
+    const org = Game.avgOrg();
+    $('#res-div .res-val').textContent = U.fmt(Math.round(Game.totalDivs())) + (training ? ` +${training}` : '');
+    $('#res-div .res-org i').style.width = org + '%';
+    $('#res-div .res-org').classList.toggle('low', org < 35);
 
     const nk = $('#res-nuke');
     nk.classList.toggle('hidden', !m.nukes);
@@ -320,7 +378,7 @@ const UI = {
     const freeSlot = P.research.length < 2 && TECHS.some(x => Game.techState(x) === 'available' && P.rp >= Game.techCost(x).rp);
     $('#badge-research').classList.toggle('hidden', !freeSlot);
     $('#badge-research').textContent = '!';
-    const freeFocus = !P.focus && FOCUSES.some(f => Game.focusState(f) === 'available');
+    const freeFocus = !P.focus && Game.focusTree().some(f => Game.focusState(f) === 'available');
     $('#badge-focus').classList.toggle('hidden', !freeFocus);
     $('#badge-focus').textContent = '!';
   },
@@ -331,8 +389,14 @@ const UI = {
     if (!P) return;
     $$('[data-live]').forEach(el => {
       const kind = el.dataset.live;
-      if (kind === 'org') { el.style.width = P.org + '%'; return; }
-      if (kind === 'orgtxt') { el.textContent = Math.round(P.org) + '%'; return; }
+      if (kind === 'aorg' || kind === 'aorgtxt' || kind === 'adivs') {
+        const a = Game.army(el.dataset.id);
+        if (!a) return;
+        if (kind === 'aorg') el.style.width = a.org + '%';
+        else if (kind === 'aorgtxt') el.textContent = Math.round(a.org) + '%';
+        else el.textContent = U.fmt(a.divs, 1);
+        return;
+      }
       const k = el.dataset.k, id = el.dataset.id;
       let cur = null;
       const c = Game.c(id);
@@ -350,6 +414,15 @@ const UI = {
   /* ---------------- ПАНЕЛЬ СТРАНЫ ---------------- */
   renderCountry() {
     const panel = this.el.panel;
+    const army = this.selectedArmy && Game.army(this.selectedArmy);
+    if (army) {
+      const sig = 'army' + JSON.stringify([army, Game.P().divs, this.armyTargetsSig(army)]);
+      if (sig === this.sig.country) return;
+      this.sig.country = sig;
+      panel.innerHTML = this.armyHTML(army);
+      panel.classList.add('open');
+      return;
+    }
     const c = this.selected && Game.c(this.selected);
     if (!c) {
       panel.classList.remove('open');
@@ -370,7 +443,8 @@ const UI = {
   countrySig(c) {
     const P = this.P(), me = Game.me, est = Game.estDivs(c);
     const reasons = [Game.canJustify(c), Game.canDeclare(c), Game.canPeace(c), Game.canInfluence(c), Game.canIntegrate(c),
-      Game.canAttack(c), Game.canNuke(c), Game.canFortify(c), Game.canDeploy(1), Game.canDeploy(5),
+      Game.canNuke(c), Game.canFortify(c), Game.canDeploy(1), Game.canDeploy(5),
+      Game.armies().filter(a => (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id)).map(a => [a.id, Math.round(a.divs), Math.round(a.org / 5), a.order.type]),
       ...SPY_OPS.map(op => Game.canSpy(c, op))];
     return JSON.stringify([c.id, c.faction, c.ctrl, Game.atWar(c), c.cb[me] === true, !!Game.justifying(c), !!c.influence, !!c.integrate, c.radioactive,
       c.factories, c.fort, Math.round(c.control), Math.round(Game.intel(c) / 5), c.sab, c.sabDays > 0, est.lo, est.hi, Math.round(c.pop / 1e5),
@@ -554,8 +628,7 @@ const UI = {
       html += '</div>';
 
       html += `<div class="cp-sec"><div class="cp-sec-title">Военные операции</div>`;
-      html += this.actBtn({ act: 'attack-plan', id: c.id, label: 'Спланировать наступление', icon: 'i-div', cls: 'act-primary', why: Game.canAttack(c),
-        sub: `Свободно: ${U.divs(P.divs)} · организация ${Math.round(P.org)}%` });
+      html += this.attackOptionsHTML(c);
       html += '</div>';
 
       html += `<div class="cp-sec cp-sec-nuke"><div class="cp-sec-title">Стратегическое оружие</div>`;
@@ -581,7 +654,8 @@ const UI = {
     const fronts = Game.fronts().sort((a, b) => Game.bordersPower(b.id) - Game.bordersPower(a.id));
     const projects = Game.list(c => c.cb[me] || (c.influence && c.influence.by === me) || (c.integrate && c.integrate.by === me));
     const threatened = Game.lands().filter(c => c.control < 99.5);
-    const sig = JSON.stringify([me, P.divs, P.training.map(t => t.count + ':' + t.total), Game.canDeploy(1), Game.canDeploy(5),
+    const sig = JSON.stringify([me, P.divs, this.selectedArmy, P.armies.map(a => [a.id, Math.round(a.divs), Math.round(a.org / 4), a.order.type, a.loc, a.order.target]),
+      P.training.map(t => t.count + ':' + t.total), Game.canDeploy(1), Game.canDeploy(5),
       fronts.map(c => { const e = Game.estDivs(c); return [c.id, e.lo, e.hi, Math.round(c.control), c.ctrl]; }),
       projects.map(c => [c.id, c.cb[me] === true, !!c.influence, !!c.integrate]),
       threatened.map(c => [c.id, Math.round(c.control / 5)])]);
@@ -589,11 +663,12 @@ const UI = {
     this.sig.dock = sig;
 
     const dc = Game.deployCost(1), dc5 = Game.deployCost(5);
-    let a = `<div class="box-title"><svg><use href="#i-div"/></svg>Вооружённые силы</div>
+    const newArmy = Math.min(P.divs, 10);
+    let a = `<div class="box-title"><svg><use href="#i-div"/></svg>Резерв и мобилизация</div>
       <div class="ab-main">
-        <div class="ab-divs"><b>${P.divs}</b><span>${U.plural(P.divs, 'дивизия', 'дивизии', 'дивизий')}</span></div>
-        <div class="ab-org"><div class="ab-org-top"><span>Организация</span><em data-live="orgtxt">${Math.round(P.org)}%</em></div>
-          <div class="meter meter-green"><i data-live="org" style="width:${P.org}%"></i></div></div>
+        <div class="ab-divs"><b>${P.divs}</b><span>${U.plural(P.divs, 'дивизия', 'дивизии', 'дивизий')} в резерве</span></div>
+        ${this.actBtn({ act: 'army-create', label: newArmy ? `Новая армия (${newArmy})` : 'Новая армия', icon: 'i-flag', data: `data-n="${newArmy || 1}"`, why: Game.canCreateArmy(newArmy || 1), cls: 'act-sm act-army',
+          tip: 'Свести дивизии резерва в армию. Армия появится в столице — затем выберите её и кликните по своей земле, чтобы отправить на фронт.' })}
       </div><div class="ab-train">`;
     if (P.training.length) {
       P.training.forEach((t, i) => {
@@ -610,8 +685,21 @@ const UI = {
     </div>`;
     this.el.army.innerHTML = a;
 
-    let f = `<div class="box-title"><svg><use href="#i-swords"/></svg>Фронты и операции<span class="box-count">${fronts.length ? fronts.length + ' ' + U.plural(fronts.length, 'фронт', 'фронта', 'фронтов') : ''}</span></div><div class="fc-list">`;
+    let f = `<div class="box-title"><svg><use href="#i-swords"/></svg>Армии и фронты<span class="box-count">${fronts.length ? fronts.length + ' ' + U.plural(fronts.length, 'фронт', 'фронта', 'фронтов') : ''}</span></div><div class="fc-list">`;
     const cards = [];
+    for (const ar of P.armies) {
+      const loc = Game.c(ar.loc);
+      const st = ar.order.type === 'attack' ? 'Наступает: ' + Game.c(ar.order.target).name
+        : ar.order.type === 'move' ? 'На марше: ' + Game.c(ar.order.to || ar.order.path[ar.order.path.length - 1]).name
+        : 'Оборона: ' + loc.name;
+      cards.push(`<div class="fc fc-army ${ar.id === this.selectedArmy ? 'sel' : ''} st-${ar.order.type}" data-act="army-select" data-army="${ar.id}">
+        <div class="fc-top"><svg class="fc-nato" viewBox="0 0 16 11"><rect x=".5" y=".5" width="15" height="10"/><path d="M.5 .5l15 10M15.5 .5l-15 10"/></svg><span class="fc-name">${U.esc(ar.name)}</span></div>
+        <div class="fc-row"><span>${U.esc(st)}</span></div>
+        <div class="fc-row"><span>Дивизии</span><b data-live="adivs" data-id="${ar.id}">${U.fmt(ar.divs, 1)}</b></div>
+        <div class="meter ${ar.org < 35 ? 'meter-orange' : 'meter-green'}"><i data-live="aorg" data-id="${ar.id}" style="width:${ar.org}%"></i></div>
+        <div class="fc-row fc-small"><span>Организация</span><b data-live="aorgtxt" data-id="${ar.id}">${Math.round(ar.org)}%</b></div>
+      </div>`);
+    }
     for (const c of fronts) {
       const e = Game.estDivs(c);
       const Y = Game.powerOf(c);
@@ -621,7 +709,7 @@ const UI = {
         <div class="fc-row"><span>Противник</span><b>${e.exact ? U.fmt(e.mid, 1) : '~' + e.lo + '–' + e.hi} див.</b></div>
         <div class="meter meter-orange"><i style="width:${c.control}%"></i></div>
         <div class="fc-row fc-small"><span>Контроль противника</span><b>${Math.round(c.control)}%</b></div>
-        <button class="btn btn-xs btn-red" data-act="attack-plan" data-id="${c.id}"><svg><use href="#i-swords"/></svg>Атаковать</button>
+        <button class="btn btn-xs btn-red" data-act="attack-plan" data-id="${c.id}"><svg><use href="#i-swords"/></svg>Наступать</button>
       </div>`);
     }
     for (const c of threatened) {
@@ -780,9 +868,9 @@ const UI = {
       const P = this.P();
       const tr = P.training.reduce((s, t) => s + t.count, 0);
       return `<div class="tt-title">Дивизии</div>
-        <div class="tt-text">Развёрнутые соединения. Нижняя полоса — организация: каждое наступление её расходует, восстановление ${U.fmt(Game.mods.orgRegen, 1)}% в день. В обороне армия делится между всеми враждебными границами.</div>
-        <div class="tt-grid"><span>Развёрнуто</span><b>${P.divs}</b><span>В обучении</span><b>${tr}</b><span>Организация</span><b>${Math.round(P.org)}%</b>
-        <span>Атака дивизии</span><b>${U.fmt(CFG.DIV.attack * Game.mods.attack * (1 + Game.mods.attackBonus), 1)}</b></div>`;
+        <div class="tt-text">Дивизии воюют в составе армий. Полоса — средняя организация армий: наступление её расходует, в обороне она восстанавливается (${U.fmt(Game.mods.orgRegen, 1)}% в день).</div>
+        <div class="tt-grid"><span>В армиях</span><b>${U.fmt(P.armies.reduce((s, a) => s + a.divs, 0), 1)}</b><span>В резерве (столица)</span><b>${P.divs}</b><span>В обучении</span><b>${tr}</b>
+        <span>Армий</span><b>${P.armies.length}</b><span>Атака дивизии</span><b>${U.fmt(CFG.DIV.attack * Game.mods.attack * (1 + Game.mods.attackBonus), 1)}</b></div>`;
     },
     rp() {
       return `<div class="tt-title">Очки исследований</div>
@@ -972,76 +1060,98 @@ const UI = {
     });
   },
 
-  /* ---------------- ПЛАНИРОВАНИЕ НАСТУПЛЕНИЯ ---------------- */
-  bestCommit(c) {
-    const P = this.P();
-    for (let n = 1; n <= P.divs; n++) if (Combat.estimate(c, n).pWin >= 0.8) return n;
-    return P.divs;
+  /* ---------------- ПАНЕЛЬ АРМИИ ---------------- */
+  armyTargetsSig(a) {
+    return (Geo.meta[a.loc] || { neighbors: [] }).neighbors.filter(n => Game.atWar(Game.c(n))).map(n => n + Math.round(Game.c(n).control));
   },
 
-  openAttackPlanner(id) {
-    const c = Game.c(id);
-    const why = Game.canAttack(c);
-    if (why) return this.result(Game.fail(why));
-    const P = this.P();
-    let n = this.bestCommit(c);
-    const est = Game.estDivs(c);
-    const html = `<div class="mh"><svg><use href="#i-div"/></svg><div><div class="mh-k">Планирование наступления</div><h2>${U.esc(c.name)}</h2></div></div>
-      <div class="ap-intel">
-        <div><span>Противник</span><b>${est.exact ? U.fmt(est.mid, 1) : '~' + est.lo + '–' + est.hi} див.</b></div>
-        <div><span>Разведданные</span><b>${Math.round(Game.intel(c))}%</b></div>
-        <div><span>Контроль противника</span><b>${Math.round(c.control)}%</b></div>
-        <div><span>Снабжение</span><b class="${Game.supplyFactor(id) < 1 ? 'neg' : 'pos'}">${Game.supplyLabel(id)}</b></div>
+  orderText(a) {
+    if (a.order.type === 'attack') return 'Наступление: ' + Game.c(a.order.target).name;
+    if (a.order.type === 'move') {
+      const to = Game.c(a.order.to || a.order.path[a.order.path.length - 1]);
+      return `Марш: ${to.name} (${U.days(a.order.left + a.order.path.slice(1).length * CFG.ARMY.stepDays)})`;
+    }
+    return 'Оборона позиций';
+  },
+
+  // Одна строка прогноза: шанс выиграть день, дни до захвата и запас организации
+  forecastHTML(e) {
+    const ok = e.daysToTake <= e.orgDays;
+    const days = isFinite(e.daysToTake) ? '~' + U.days(e.daysToTake) : 'не взять';
+    return `<span class="fc-odds ${e.pWin >= 0.6 ? 'good' : e.pWin >= 0.35 ? 'mid' : 'bad'}">${U.pct(e.pWin)} побед в день</span> · ${days} · ${ok ? '<span class="pos">организации хватит</span>' : `<span class="neg">организации на ${U.days(e.orgDays)}</span>`}`;
+  },
+
+  armyHTML(a) {
+    const d = this.D(), P = this.P(), loc = Game.c(a.loc);
+    const targets = (Geo.meta[a.loc] || { neighbors: [] }).neighbors.map(n => Game.c(n)).filter(c => c && Game.atWar(c));
+    let html = `<div class="cp-head" style="--fc:${d.color}">
+      <div class="cp-flag army-flag"><svg viewBox="0 0 16 11"><rect x=".5" y=".5" width="15" height="10"/><path d="M.5 .5l15 10M15.5 .5l-15 10"/></svg></div>
+      <div class="cp-title"><div class="cp-name">${U.esc(a.name)}</div><div class="cp-badges">${this.badge('Командующий: ' + a.general, 'fac')}${this.badge(this.orderText(a), a.order.type === 'attack' ? 'war' : 'sov')}</div></div>
+      <button class="icon-btn" data-ui="close-panel" data-tip="Снять выбор (Esc)"><svg><use href="#i-close"/></svg></button>
+    </div><div class="cp-body">
+      <div class="cp-stats">
+        ${this.stat('Дивизии', `${U.fmt(a.divs, 1)} / ${CFG.ARMY.max}`)}
+        ${this.stat('Место', U.esc(loc.name))}
+        ${this.stat('Организация', Math.round(a.org) + '%', this.meter(a.org, a.org < 35 ? 'meter-orange' : 'meter-green'), 'Наступление расходует организацию; ниже ' + CFG.ARMY.haltOrg + '% армия останавливается. В обороне восстанавливается.')}
+        ${this.stat('Сила атаки', U.fmt(a.divs * CFG.DIV.attack * Game.mods.attack * (1 + Game.mods.attackBonus), 0))}
       </div>
-      <label class="ap-label">Задействовать дивизий: <b id="ap-n">${n}</b> из ${P.divs}</label>
-      <input type="range" id="ap-range" min="1" max="${P.divs}" value="${n}">
-      <div class="ap-odds">
-        <div class="odds-ring" id="ap-ring"><b id="ap-win">0%</b><span>шанс победы</span></div>
-        <div class="ap-figs">
-          <div><span>Сила атаки</span><b id="ap-att">0</b></div>
-          <div><span>Оборона (оценка)</span><b id="ap-def">0</b></div>
-          <div><span>Шанс прорыва (×2)</span><b id="ap-break">0%</b></div>
-          <div><span>Ожидаемые потери</span><b id="ap-loss">0</b></div>
-          <div><span>Расход организации</span><b id="ap-org">0</b></div>
+      <div class="cp-note army-hint">Кликните по <b>своей</b> земле — армия пойдёт туда. По <b>соседней вражеской</b> — начнёт наступление. Правый клик тоже работает.</div>`;
+    if (a.battle && a.order.type === 'attack') {
+      const c = Game.c(a.battle.target), last = a.battle.last;
+      html += `<div class="cp-sec"><div class="cp-sec-title">Идёт сражение</div>
+        <div class="battle-box">
+          <div class="fc-row"><span>Направление</span><b>${U.esc(c.name)}</b></div>
+          <div class="fc-row"><span>День боёв</span><b>${a.battle.days}</b></div>
+          <div class="fc-row"><span>Контроль противника</span><b>${Math.round(c.control)}%</b></div>
+          ${this.meter(c.control, 'meter-orange')}
+          <div class="fc-row"><span>Потери: наши / врага</span><b>${U.fmt(a.battle.attLost, 1)} / ${U.fmt(a.battle.defLost, 1)} див.</b></div>
+          ${last ? `<div class="fc-row"><span>Сегодня: соотношение сил</span><b class="${last.ratio >= 1 ? 'pos' : 'neg'}">${U.fmt(last.ratio, 2)}</b></div>` : ''}
         </div>
-      </div>
-      <div class="ap-cols"><div><div class="ap-col-t">Наша атака</div><ul class="mods" id="ap-amods"></ul></div>
-        <div><div class="ap-col-t">Оборона противника</div><ul class="mods" id="ap-dmods"></ul></div></div>
-      ${est.exact ? '' : '<div class="cp-note warn">Разведданные неполны — оценка обороны может ошибаться. Проведите «Сбор разведданных».</div>'}
-      <div class="m-actions"><button class="btn" data-cancel>Отмена</button><button class="btn btn-red" data-go><svg><use href="#i-swords"/></svg>Начать наступление</button></div>`;
-    this.openModal({
-      key: 'attack', cls: 'm-attack', html,
-      onOpen: (el, m) => {
-        const range = el.querySelector('#ap-range');
-        const upd = () => this.updateAttackPlanner(el, c, n);
-        range.addEventListener('input', () => { n = +range.value; upd(); });
-        el.querySelector('[data-cancel]').onclick = () => this.closeModal(m);
-        el.querySelector('[data-go]').onclick = () => {
-          this.closeModal(m);
-          Act.call('attack', id, n).then(res => { if (!res.ok) this.result(res); });
-        };
-        upd();
+        ${this.actBtn({ act: 'army-hold', label: 'Остановить наступление', icon: 'i-shield', data: `data-army="${a.id}"`, sub: 'Армия перейдёт к обороне и восстановит организацию' })}
+      </div>`;
+    }
+    if (targets.length) {
+      html += `<div class="cp-sec"><div class="cp-sec-title">Цели для наступления</div>`;
+      for (const c of targets) {
+        if (a.order.type === 'attack' && a.order.target === c.id) continue;
+        const e = Combat.estimateArmies(c, [a]);
+        html += this.actBtn({ act: 'army-attack', id: c.id, data: `data-army="${a.id}"`, label: 'Наступать: ' + c.name, icon: 'i-swords', cls: 'act-primary',
+          why: Game.canOrderAttack(a, c), sub: this.forecastHTML(e) });
       }
-    });
+      html += '</div>';
+    } else {
+      html += `<div class="cp-note">Рядом нет врага. Отведите армию к линии фронта: кликните по своей приграничной земле.</div>`;
+    }
+    const n5 = Math.min(5, P.divs, Math.floor(CFG.ARMY.max - a.divs));
+    html += `<div class="cp-sec"><div class="cp-sec-title">Управление</div>
+      ${this.actBtn({ act: 'army-reinforce', data: `data-army="${a.id}" data-n="5"`, label: 'Пополнить из резерва', icon: 'i-plus',
+        why: n5 < 1 ? (P.divs < 1 ? 'Резерв пуст — сформируйте дивизии' : 'Армия укомплектована') : null, sub: `+${Math.max(n5, 0)} див. · в резерве ${P.divs}` })}
+      ${a.order.type !== 'hold' && a.order.type !== 'attack' ? this.actBtn({ act: 'army-hold', data: `data-army="${a.id}"`, label: 'Остановиться', icon: 'i-shield' }) : ''}
+      ${this.actBtn({ act: 'army-disband', data: `data-army="${a.id}"`, label: 'Расформировать', icon: 'i-close', why: a.order.type === 'attack' ? 'Сначала остановите наступление' : null, sub: 'Дивизии вернутся в резерв' })}
+    </div></div>`;
+    return html;
+  },
+
+  // В панели вражеской страны: наши армии рядом и прогноз наступления
+  attackOptionsHTML(c) {
+    if (!Game.atWar(c)) return '<div class="cp-note">Нет состояния войны. Обоснуйте и объявите войну, затем подведите армию к границе.</div>';
+    const near = Game.armies().filter(a => (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id));
+    if (!near.length) return '<div class="cp-note warn">Рядом нет наших армий. Выберите армию (внизу или фишкой на карте) и кликните по своей земле у этой границы.</div>';
+    let html = '';
+    for (const a of near) {
+      if (a.order.type === 'attack' && a.order.target === c.id) {
+        html += this.actBtn({ act: 'army-select', data: `data-army="${a.id}"`, label: a.name + ': уже наступает', icon: 'i-swords', sub: `День ${a.battle ? a.battle.days : 0} · организация ${Math.round(a.org)}%` });
+        continue;
+      }
+      const e = Combat.estimateArmies(c, [a]);
+      html += this.actBtn({ act: 'army-attack', id: c.id, data: `data-army="${a.id}"`, label: `${a.name} (${U.fmt(a.divs, 0)} див.)`, icon: 'i-swords', cls: 'act-primary',
+        why: Game.canOrderAttack(a, c), sub: this.forecastHTML(e) });
+    }
+    return html;
   },
 
   modsList(lines) {
     return lines.map(l => `<li><span>${U.esc(l.label)}</span><b class="${l.mult != null ? (l.mult >= 1 ? 'pos' : 'neg') : ''}">${l.mult != null ? '×' + U.fmt(l.mult, 2) : U.fmt(l.value, 0)}</b></li>`).join('');
-  },
-
-  updateAttackPlanner(el, c, n) {
-    const e = Combat.estimate(c, n);
-    el.querySelector('#ap-n').textContent = n;
-    el.querySelector('#ap-win').textContent = U.pct(e.pWin);
-    el.querySelector('#ap-ring').style.setProperty('--p', (e.pWin * 100).toFixed(1));
-    el.querySelector('#ap-ring').className = 'odds-ring ' + (e.pWin >= 0.7 ? 'good' : e.pWin >= 0.4 ? 'mid' : 'bad');
-    el.querySelector('#ap-att').textContent = U.fmt(e.att.total, 0);
-    el.querySelector('#ap-def').textContent = (e.exact ? '' : '~') + U.fmt(e.def.total, 0);
-    el.querySelector('#ap-break').textContent = U.pct(e.pBreak);
-    el.querySelector('#ap-loss').textContent = '~' + U.fmt(e.expLoss, 1) + ' див.';
-    el.querySelector('#ap-org').textContent = '−' + e.orgCost + '%';
-    el.querySelector('#ap-amods').innerHTML = this.modsList(e.att.lines);
-    el.querySelector('#ap-dmods').innerHTML = this.modsList(e.def.lines);
   },
 
   /* ---------------- СВОДКА БОЯ ---------------- */
@@ -1074,21 +1184,21 @@ const UI = {
     } else if (r.ratio >= 1) {
       summary += ` Контроль противника упал до ${Math.round(r.controlAfter)}%. Ещё несколько ударов — и фронт рухнет.`;
     } else {
-      summary += ' Рекомендуется восстановить организацию, усилить группировку или провести саботаж обороны.';
+      summary += r.result === 'halted' ? ' Армия выдохлась: организация упала до предела. Дайте ей восстановиться в обороне, пополните из резерва или проведите саботаж обороны.' : '';
     }
     const ctrlAfter = Math.round(r.controlAfter);
     const myName = POWERS[r.by].name;
     const html = `<div class="br">
-      <div class="br-top"><div><div class="mh-k">Сводка боевых действий · ${U.fmtDate(r.date)}</div><h2>${U.esc(r.op)}</h2><div class="br-front">Фронт: ${U.esc(r.targetName)}${r.defender ? ' · противник: ' + U.esc(POWERS[r.defender].name) : ''}</div></div>
+      <div class="br-top"><div><div class="mh-k">Итоги наступления · ${U.days(r.days || 1)} боёв · ${U.fmtDate(r.date)}</div><h2>${U.esc(r.op)}</h2><div class="br-front">Фронт: ${U.esc(r.targetName)}${r.defender ? ' · противник: ' + U.esc(POWERS[r.defender].name) : ''}</div></div>
         <div class="br-outcome tone-${tone}">${U.esc(headline)}</div></div>
       <div class="br-sides">
         <div class="br-side sov"><div class="br-side-head"><i style="background:${POWERS[r.by].color}"></i>${U.esc(myName)} · ${A.divs} див.</div>
-          <div class="br-power">${U.fmt(A.power, 0)}</div><div class="br-power-l">сила атаки</div>
+          <div class="br-power">${U.fmt(A.power, 0)}</div><div class="br-power-l">сила атаки в последний день</div>
           <div class="br-dice">${this.die(A.dice[0])}${this.die(A.dice[1])}<span>2d6 = ${A.dice[0] + A.dice[1]} → ×${U.fmt(A.roll, 2)}</span></div>
           <ul class="mods">${this.modsList(A.lines)}</ul></div>
-        <div class="br-vs"><div class="br-ratio">${U.fmt(r.ratio, 2)}</div><div class="br-ratio-l">соотношение сил</div></div>
+        <div class="br-vs"><div class="br-ratio">${U.fmt(r.ratio, 2)}</div><div class="br-ratio-l">среднее соотношение сил</div></div>
         <div class="br-side enemy"><div class="br-side-head"><i style="background:${enemyColor}"></i>${U.esc(r.targetName)} · ${U.fmt(D.divs, 1)} див.</div>
-          <div class="br-power">${U.fmt(D.power, 0)}</div><div class="br-power-l">сила обороны</div>
+          <div class="br-power">${U.fmt(D.power, 0)}</div><div class="br-power-l">сила обороны в последний день</div>
           <div class="br-dice">${this.die(D.dice[0])}${this.die(D.dice[1])}<span>2d6 = ${D.dice[0] + D.dice[1]} → ×${U.fmt(D.roll, 2)}</span></div>
           <ul class="mods">${this.modsList(D.lines)}</ul></div>
       </div>
@@ -1103,7 +1213,7 @@ const UI = {
       </div>
       <div class="br-summary">${U.esc(summary)}</div>
       <div class="m-actions">
-        ${!r.capitulated && Game.canAttack(Game.c(r.targetId)) === null ? `<button class="btn btn-red" data-again><svg><use href="#i-swords"/></svg>Новое наступление</button>` : ''}
+
         <button class="btn btn-gold" data-ok>Продолжить</button>
       </div></div>`;
     if (r.capitulated) Sound.play('victory');
@@ -1111,8 +1221,7 @@ const UI = {
       key: 'battle', cls: 'm-battle', html,
       onOpen: (el, m) => {
         el.querySelector('[data-ok]').onclick = () => this.closeModal(m);
-        const again = el.querySelector('[data-again]');
-        if (again) again.onclick = () => { this.closeModal(m); this.openAttackPlanner(r.targetId); };
+
       }
     });
   },
@@ -1268,11 +1377,12 @@ const UI = {
     const P = this.P();
     const cur = P.focus ? FOCUS_BY_ID[P.focus.id] : null;
     let html = `<div class="rs-head"><div class="rs-rp"><svg><use href="#i-tree"/></svg><span>${cur ? `Выполняется: <b>${U.esc(Game.focusName(cur))}</b>` : 'Фокус не выбран — выберите доступный узел дерева'}</span></div>
-      <div class="rs-hint">Фокусы бесплатны, но выполняются по одному. Два курса в предпоследнем ряду взаимоисключающие.</div></div>`;
+      <div class="rs-hint">Фокусы бесплатны, но выполняются по одному. Во втором ряду выберите курс страны — военный, экономический или экспансии.</div></div>`;
     html += '<div class="ft-wrap"><div class="ft" id="focus-tree"><svg class="ft-lines"></svg>';
-    for (const f of FOCUSES) {
+    for (const f of Game.focusTree()) {
       const st = Game.focusState(f), why = Game.canFocus(f);
-      html += `<div class="fnode st-${st}" style="--x:${f.x};--y:${f.y}" data-fid="${f.id}">
+      html += `<div class="fnode st-${st}${f.path ? ' fnode-path' : ''}" style="--x:${f.x};--y:${f.y}" data-fid="${f.id}" data-tip="${U.esc(f.desc)}">
+        ${f.path ? `<div class="fnode-kind">${U.esc(f.path)}</div>` : ''}
         <div class="fnode-name">${U.esc(Game.focusName(f))}</div>
         <div class="fnode-desc">${U.esc(f.desc)}</div>
         ${st === 'active' ? `<div class="meter meter-gold"><i data-live="prog" data-k="focus" data-id="${f.id}" style="width:${(1 - P.focus.daysLeft / P.focus.total) * 100}%"></i></div><em class="fnode-days" data-live="days" data-k="focus" data-id="${f.id}">${U.days(P.focus.daysLeft)}</em>` :
@@ -1280,18 +1390,18 @@ const UI = {
           `<button class="btn btn-xs ${why ? 'is-disabled' : 'btn-gold'}" data-act="focus-start" data-id="${f.id}" aria-disabled="${!!why}" ${why ? `data-why="${U.esc(why)}" data-tip="${U.esc(why)}"` : ''}>${U.days(f.days)}</button>`}
       </div>`;
     }
-    html += '<div class="ft-excl" style="--x:2;--y:3"><span>⇋</span>взаимоисключающие</div></div></div>';
+    html += '<div class="ft-excl"><span>⇋</span>Выбор курса: можно взять только один из трёх путей</div></div></div>';
     return html;
   },
 
   drawFocusLines(root) {
     const tree = root.querySelector('#focus-tree');
     const svg = tree.querySelector('.ft-lines');
-    const W = 176, H = 132, NW = 160, NH = 112;   // шаг сетки и размер узла — совпадают с CSS
+    const W = 134, H = 124, NW = 124, NH = 108;   // шаг сетки и размер узла — совпадают с CSS
     const pos = f => ({ x: f.x * W + NW / 2, top: f.y * H, bottom: f.y * H + NH });
     const P = this.P();
     let d = '';
-    for (const f of FOCUSES) {
+    for (const f of Game.focusTree()) {
       const parents = (f.reqAny || f.req || []).map(id => FOCUS_BY_ID[id]);
       const c = pos(f);
       for (const p of parents) {
@@ -1370,6 +1480,7 @@ const UI = {
         <section><h3>Время</h3><p>1 игровой день = 1 секунда на скорости 1. <kbd>Пробел</kbd> — пауза, <kbd>+</kbd>/<kbd>−</kbd> или <kbd>1</kbd>–<kbd>4</kbd> — скорость. В сетевой игре время общее: пауза и скорость меняются у всех.</p></section>
         <section><h3>Ресурсы</h3><p><b>ПВ</b> — политвласть для любых решений. <b>Заводы</b> дают очки исследований (ОИ). <b>Призывники</b> нужны для новых дивизий. <b>Напряжённость</b> общая для мира: выше 50% блоки мобилизуются, выше 75–80% сами вступают в войну.</p></section>
         <section><h3>Война</h3><p>Кликните по стране → «Обосновать войну» → дождитесь окончания → «Объявить войну». Территория станет оранжевым фронтом. «Спланировать наступление» покажет шанс победы: сила атаки против обороны плюс бросок 2d6 с каждой стороны. Через пролив атака слабее на 20%, десантом — на 45%. Сверхдержавы обладают <b>стойкостью</b>: их фронт рушится медленнее.</p></section>
+        <section><h3>Армии и фронт</h3><p>Дивизии воюют в составе армий — фишек на карте. Кликните по фишке, затем по своей земле — армия пойдёт туда; по соседней вражеской — начнёт наступление. Бой идёт каждый день, пока не кончится организация. Земли без армии защищает только ополчение.</p></section>
         <section><h3>Против человека</h3><p>Армия державы-игрока защищает все её враждебные границы сразу: чем больше у соперника фронтов, тем слабее каждый участок. Мир между людьми заключается только по согласию обоих.</p></section>
         <section><h3>Разведка</h3><p>Без разведданных численность врага видна как диапазон. «Сбор разведданных» уточняет цифры, «Саботаж» снижает оборону до −60%, «Диверсия» уничтожает заводы. Провалы повышают напряжённость.</p></section>
         <section><h3>Наука и фокусы</h3><p><kbd>R</kbd> — исследования (2 отдела одновременно), <kbd>F</kbd> — национальные фокусы. Ядерная ветка до 4-го уровня открывает ядерный удар: регион навсегда превращается в пустошь без заводов.</p></section>

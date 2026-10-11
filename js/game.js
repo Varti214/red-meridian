@@ -116,13 +116,21 @@ const Game = {
       c.ctrl = tag; c.core = tag; c.faction = d.faction;
       c.divs = 0; c.baseDivs = 0;
     }
-    this.S.powers[tag] = {
+    const P = this.S.powers[tag] = {
       tag, player: playerName || '', out: false,
-      pp: CFG.START.pp, mp: d.mp, divs: Math.round(divs), org: CFG.START.org, rp: CFG.START.rp,
+      pp: CFG.START.pp, mp: d.mp, divs: Math.round(divs), rp: CFG.START.rp,
+      armies: [], armySeq: 0,
       warheads: 0, warheadTimer: 0, factoryTimer: 0,
       training: [], research: [], techs: [], focus: null, focuses: [],
       stats: { won: 0, lost: 0, annexed: 0, nukes: 0, spyOk: 0, spyFail: 0, divLost: 0, enemyKilled: 0 }
     };
+    // Стартовые армии стоят на границах; что не вошло в армии — резерв в столице
+    for (const a of d.armies || []) {
+      const n = Math.min(a.divs, P.divs);
+      if (n < 1) break;
+      P.divs -= n;
+      this.newArmy(tag, a.name, n, this.S.countries[a.loc] && this.S.countries[a.loc].ctrl === tag ? a.loc : d.capital);
+    }
     this.S.nextRandomEvent[tag] = 45;
   },
 
@@ -147,7 +155,7 @@ const Game = {
     const m = this.emptyMods();
     const apply = fx => {
       for (const [k, v] of Object.entries(fx)) {
-        if (k === 'factories' || k === 'mp') continue;        // разовые эффекты
+        if (FOCUS_ONCE.includes(k)) continue;                 // разовые эффекты
         if (k === 'attack') m.attack = Math.max(m.attack, v);  // лучший танк заменяет предыдущий
         else if (k === 'factoryEvery') m.factoryEvery = Math.min(m.factoryEvery, v);
         else if (k === 'tensionDecay') m.tensionDecay = Math.max(m.tensionDecay, v);
@@ -166,7 +174,7 @@ const Game = {
     return {
       attack: 1, attackBonus: 0, loss: 0, org: 0, factoryEvery: Infinity, rp: 0, pp: 0, train: 0,
       spyCost: 0, spyChance: 0, spyTension: 0, intelKeep: false, justify: 0, influence: 0,
-      tensionDecay: 1, mpMult: 0, nucCost: 0, nucDays: 0, nukes: false, thermo: false,
+      tensionDecay: 1, mpMult: 0, nucCost: 0, nucDays: 0, nukes: false, thermo: false, defense: 0, amph: 0,
       orgRegen: CFG.ORG_REGEN, warheadDays: CFG.WARHEAD_DAYS
     };
   },
@@ -174,7 +182,8 @@ const Game = {
 
   /* ---------------- НАЗВАНИЯ ДЛЯ РАЗНЫХ ДЕРЖАВ ---------------- */
   techName(t, tag = this.cur) { return (TECH_NAMES[tag] && TECH_NAMES[tag][t.id]) || t.name; },
-  focusName(f, tag = this.cur) { return (FOCUS_NAMES[tag] && FOCUS_NAMES[tag][f.id]) || f.name; },
+  focusName(f) { return f.name; },
+  focusTree(tag = this.cur) { return FOCUS_TREES[tag] || []; },
   branchName(b, tag = this.cur) { return (BRANCH_NAMES[tag] && BRANCH_NAMES[tag][b.id]) || b.name; },
 
   /* ---------------- ВЫБОРКИ ---------------- */
@@ -234,15 +243,13 @@ const Game = {
   // Оценка численности войск с учётом разведданных (для другой державы — её армия на этом участке)
   estDivs(c, tag = this.cur) {
     const Y = this.powerOf(c);
-    const real = Y && Y !== tag ? this.powerDefenders(Y) : c.divs;
+    const real = Y && Y !== tag ? this.landDefenders(c, Y) : c.divs;
     const intel = this.intel(c, tag);
     if (intel >= 80 || c.ctrl === tag || this.isAlly(c, tag)) return { mid: real, lo: Math.round(real), hi: Math.round(real), exact: true };
     const err = (1 - intel / 100) * 0.5;
     const mid = Math.max(0, real * (1 + c.noise * err * 0.6));
     return { mid, lo: Math.max(0, Math.floor(mid * (1 - err))), hi: Math.max(1, Math.ceil(mid * (1 + err))), exact: false };
   },
-  // Армия державы делится между всеми её враждебными границами
-  powerDefenders(Y) { return this.P(Y).divs / Math.max(1, this.hostileBorderCount(Y)); },
 
   /* ---------------- ЕЖЕДНЕВНЫЕ ПРИРОСТЫ (для текущей державы) ---------------- */
   dailyPP() { return (CFG.PP_BASE + this.mods.pp + this.allies().length * 0.1) * this.diff.pp; },
@@ -339,6 +346,7 @@ const Game = {
     S.date += DAY_MS;
 
     for (const tag of this.alive()) this.as(tag, () => this.tickPower());
+    this.tickBattles();
 
     this.tickProjects();
     let anyWar = false;
@@ -361,7 +369,7 @@ const Game = {
     P.pp += this.dailyPP();
     P.rp += this.dailyRP();
     P.mp += this.dailyMP();
-    P.org = Math.min(100, P.org + m.orgRegen);
+    this.tickArmies();
     if (isFinite(m.factoryEvery) && ++P.factoryTimer >= m.factoryEvery) {
       P.factoryTimer = 0;
       this.addFactories(1, true);
@@ -434,8 +442,7 @@ const Game = {
     const f = FOCUS_BY_ID[P.focus.id];
     P.focuses.push(f.id);
     P.focus = null;
-    if (f.fx.factories) this.addFactories(f.fx.factories);
-    if (f.fx.mp) this.addMP(f.fx.mp);
+    this.applyFocusOnce(f);
     this.log('success', 'Национальный фокус выполнен', `«${this.focusName(f)}». ${f.desc}`);
     Bus.emit('focusDone', { power: this.cur, name: this.focusName(f) });
     Bus.emit('stateChanged');
@@ -712,74 +719,315 @@ const Game = {
     Bus.emit('stateChanged');
   },
 
-  /* --- Наступление --- */
-  canAttack(c) {
+  /* ============================================================
+     АРМИИ И ФРОНТ (как в HOI4)
+     Дивизии державы живут в армиях. У армии есть место (территория) и приказ:
+       hold   — оборонять своё место (организация восстанавливается);
+       move   — идти по своим землям к цели (переход занимает дни);
+       attack — наступать на соседнюю вражескую землю: бой идёт каждый день,
+                контроль врага падает, пока не кончится организация.
+     Земли без армии прикрывает только ополчение. Резерв стоит в столице.
+     ============================================================ */
+  armies(tag = this.cur) { const P = this.P(tag); return P ? P.armies : []; },
+  army(id, tag = this.cur) { return this.armies(tag).find(a => a.id === id) || null; },
+  armiesAt(locId, tag = this.cur) { return this.armies(tag).filter(a => a.loc === locId); },
+  totalDivs(tag = this.cur) { const P = this.P(tag); return P ? P.divs + P.armies.reduce((s, a) => s + a.divs, 0) : 0; },
+  avgOrg(tag = this.cur) {
+    const A = this.armies(tag), d = A.reduce((s, a) => s + a.divs, 0);
+    return d ? A.reduce((s, a) => s + a.org * a.divs, 0) / d : 100;
+  },
+  setArmyOrg(v) { this.armies().forEach(a => { a.org = v; }); },
+  // Сколько дивизий державы Y защищает землю c: армии на ней (+ резерв, если это столица)
+  landDefenders(c, Y = c.ctrl) {
+    if (!this.isPower(Y)) return c.divs;
+    let s = this.armiesAt(c.id, Y).reduce((t, a) => t + a.divs, 0);
+    if (c.id === POWERS[Y].capital) s += this.P(Y).divs;
+    return s;
+  },
+  landOrg(c, Y = c.ctrl) {
+    const A = this.armiesAt(c.id, Y), d = A.reduce((s, a) => s + a.divs, 0);
+    return d ? A.reduce((s, a) => s + a.org * a.divs, 0) / d : 100;
+  },
+  // Потери обороняющихся: делим между армиями на земле и резервом (если столица)
+  takeLosses(c, Y, n) {
+    if (n <= 0) return 0;
+    const A = this.armiesAt(c.id, Y);
+    const cap = c.id === POWERS[Y].capital ? this.P(Y).divs : 0;
+    const total = A.reduce((s, a) => s + a.divs, 0) + cap;
+    if (total <= 0) return 0;
+    n = Math.min(n, total);
+    for (const a of A) a.divs = Math.max(0, a.divs - n * a.divs / total);
+    if (cap) this.P(Y).divs = Math.max(0, Math.round(this.P(Y).divs - n * cap / total));
+    this.P(Y).stats.divLost += n;
+    this.cleanArmies(Y);
+    return n;
+  },
+  cleanArmies(tag) {
+    const P = this.P(tag);
+    const dead = P.armies.filter(a => a.divs < 0.5);
+    if (!dead.length) return;
+    P.armies = P.armies.filter(a => a.divs >= 0.5);
+    dead.forEach(a => this.log('alert', 'Армия уничтожена', `${a.name} (командующий ${a.general}) перестала существовать.`, a.loc, tag));
+  },
+  armyName(tag, n) { return { SOV: `${n}-я армия`, WST: `${n}-я армия США`, AXS: `${n}-я армия Рейха` }[tag] || `${n}-я армия`; },
+  newArmy(tag, name, divs, loc) {
+    const P = this.P(tag), d = POWERS[tag];
+    P.armySeq++;
+    const a = {
+      id: tag + P.armySeq, name: name || this.armyName(tag, P.armySeq),
+      general: d.generals[(P.armySeq - 1) % d.generals.length],
+      divs, loc: loc || d.capital, org: 100, order: { type: 'hold' }, battle: null
+    };
+    P.armies.push(a);
+    return a;
+  },
+  // Сколько дней идти между соседними землями (через пролив — дольше)
+  stepDays(a, b) { return Geo.isSea(a, b) ? CFG.ARMY.seaStepDays : CFG.ARMY.stepDays; },
+  // Путь по своим землям (поиск в ширину по соседству)
+  armyPath(from, to, tag = this.cur) {
+    if (from === to) return [];
+    const prev = { [from]: null }, queue = [from];
+    while (queue.length) {
+      const cur = queue.shift();
+      for (const n of (Geo.meta[cur] || { neighbors: [] }).neighbors) {
+        if (n in prev) continue;
+        const c = this.c(n);
+        if (!c || c.ctrl !== tag) continue;
+        prev[n] = cur;
+        if (n === to) {
+          const path = [];
+          for (let p = to; p !== from; p = prev[p]) path.unshift(p);
+          return path;
+        }
+        queue.push(n);
+      }
+    }
+    return null;
+  },
+  // Снабжение армии при наступлении: сухопутная граница 100%, через пролив 80% (морская пехота помогает)
+  armySupply(fromId, toId) {
+    return Geo.isSea(fromId, toId) ? Math.min(1, 0.8 + this.mods.amph) : 1;
+  },
+
+  /* --- Действия с армиями --- */
+  canCreateArmy(n) {
+    if (this.outReason()) return this.outReason();
+    if (this.P().divs < 1) return 'Резерв пуст — сформируйте дивизии';
+    if (n > this.P().divs) return `В резерве только ${this.P().divs} див.`;
+    return null;
+  },
+  createArmy(n) {
+    n = U.clamp(Math.round(n), 1, CFG.ARMY.max);
+    const why = this.canCreateArmy(n);
+    if (why) return this.fail(why);
+    this.P().divs -= n;
+    const a = this.newArmy(this.cur, null, n);
+    this.log('mil', 'Новая армия', `${a.name} (${U.divs(n)}, командующий ${a.general}) развёрнута в столице.`, a.loc);
+    Bus.emit('stateChanged');
+    return { ok: true, msg: `Сформирована ${a.name}`, army: a.id };
+  },
+  reinforceArmy(id, n) {
+    const a = this.army(id), P = this.P();
+    if (!a) return this.fail('Армия не найдена');
+    if (this.outReason()) return this.fail(this.outReason());
+    const take = Math.min(Math.round(n), P.divs, Math.floor(CFG.ARMY.max - a.divs));
+    if (take < 1) return this.fail(P.divs < 1 ? 'Резерв пуст' : `В армии не больше ${CFG.ARMY.max} дивизий`);
+    P.divs -= take;
+    a.divs += take;
+    a.org = Math.min(a.org, 70);   // пополнение нужно влить в части
+    Bus.emit('stateChanged');
+    return { ok: true, msg: `${a.name}: +${take} див.` };
+  },
+  disbandArmy(id) {
+    const a = this.army(id), P = this.P();
+    if (!a) return this.fail('Армия не найдена');
+    if (a.order.type === 'attack') return this.fail('Сначала остановите наступление');
+    P.divs += Math.round(a.divs);
+    P.armies = P.armies.filter(x => x !== a);
+    this.log('mil', 'Армия расформирована', `${a.name}: дивизии возвращены в резерв.`, a.loc);
+    Bus.emit('stateChanged');
+    return { ok: true };
+  },
+  orderHold(id) {
+    const a = this.army(id);
+    if (!a) return this.fail('Армия не найдена');
+    if (a.battle) this.finishBattle(a, 'stopped');
+    a.order = { type: 'hold' };
+    Bus.emit('stateChanged');
+    return { ok: true, msg: `${a.name}: оборона` };
+  },
+  canMove(a, c) {
+    if (!a) return 'Армия не найдена';
+    if (this.outReason()) return this.outReason();
+    if (!c || c.ctrl !== this.cur) return 'Двигаться можно только по своей территории';
+    if (c.id === a.loc) return 'Армия уже здесь';
+    if (!this.armyPath(a.loc, c.id)) return 'Нет пути по нашей территории';
+    return null;
+  },
+  orderMove(id, targetId) {
+    const a = this.army(id), c = this.c(targetId), why = this.canMove(a, c);
+    if (why) return this.fail(why);
+    if (a.battle) this.finishBattle(a, 'stopped');
+    const path = this.armyPath(a.loc, c.id);
+    a.order = { type: 'move', path, left: this.stepDays(a.loc, path[0]), to: c.id };
+    const days = path.reduce((s, p, i) => s + this.stepDays(i ? path[i - 1] : a.loc, p), 0);
+    Bus.emit('stateChanged');
+    return { ok: true, msg: `${a.name} выступает: ${c.name}, ~${U.days(days)}` };
+  },
+  canOrderAttack(a, c) {
+    if (!a) return 'Армия не найдена';
     if (this.outReason()) return this.outReason();
     if (!c || c.ctrl === this.cur) return 'Это наша территория';
     if (!this.atWar(c)) return 'Нет состояния войны';
-    if (this.P().divs < 1) return 'Нет свободных дивизий';
-    if (this.P().org < 10) return 'Армия дезорганизована (организация < 10%)';
+    if (a.order.type === 'move') return 'Армия на марше';
+    if (!(Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id)) return 'Армия должна стоять на соседней территории';
+    if (a.org < CFG.ARMY.haltOrg + 10) return `Армия измотана (организация ${Math.round(a.org)}%) — дайте ей отдохнуть`;
     return null;
   },
-  attack(id, commit) {
-    const S = this.S, X = this.cur, P = this.P(), c = this.c(id);
-    const why = this.canAttack(c);
+  orderAttack(id, targetId) {
+    const a = this.army(id), c = this.c(targetId), why = this.canOrderAttack(a, c);
     if (why) return this.fail(why);
-    commit = U.clamp(Math.round(commit), 1, P.divs);
+    if (a.battle && a.battle.target !== c.id) this.finishBattle(a, 'stopped');
+    a.order = { type: 'attack', target: c.id };
+    if (!a.battle) a.battle = { target: c.id, start: this.S.day, days: 0, attLost: 0, defLost: 0, ctrlStart: c.control, ratioSum: 0, last: null, orgStart: a.org };
     const Y = this.powerOf(c);
-
-    const r = Combat.resolveAttack(c, commit);
-    P.divs -= r.playerLost;
-    P.org = Math.max(0, P.org - r.orgCost);
-    P.mp = Math.max(0, P.mp - Math.round(commit * 0.5));
-    if (Y) {
-      const PY = this.P(Y);
-      r.enemyLost = Math.min(PY.divs, U.probRound(r.enemyLost));
-      PY.divs -= r.enemyLost;
-      PY.org = Math.max(0, PY.org - 5);
-      PY.stats.divLost += r.enemyLost;
-    } else {
-      c.divs = Math.max(0, c.divs - r.enemyLost);
-    }
-    c.control = Math.max(0, c.control - r.controlDrop);
-    if (r.loot > 0) {
-      c.factories -= r.loot;
-      this.addFactories(r.loot);
-    }
-    P.stats.divLost += r.playerLost;
-    P.stats.enemyKilled += r.enemyLost;
-    const t0 = S.tension;
-    this.addTension(0.5);
-    if (r.ratio >= 1) { P.stats.won++; r.ppGain = 2; this.addPP(2); } else { P.stats.lost++; r.ppGain = 0; }
-
-    r.enemyAfter = Y ? this.powerDefenders(Y) : c.divs;
-    r.controlAfter = c.control;
-    r.capitulated = false;
-    if (c.control <= 0 || (!Y && c.divs < 0.5)) {
-      r.capitulated = true;
-      r.liberation = c.core === X;
-      r.captured = !!Y;
-      r.annexedFactories = Y ? this.transferLand(c, X) : this.capitulate(c, X);
-      r.controlAfter = 0;
-      if (Y) this.log('alert', 'Территория потеряна', `Противник (${POWERS[X].name}) захватил: ${c.name}.`, id, Y);
-    }
-    r.tension = S.tension - t0;
-    r.divsLeft = P.divs;
-    r.orgLeft = P.org;
-
-    const tone = r.capitulated ? 'success' : 'mil';
-    this.log(tone, `${r.op}: ${r.outcome.title.toLowerCase()}`,
-      `Фронт: ${c.name}. Потери: наши ${r.playerLost} див., противник ${U.fmt(r.enemyLost, 1)} див. Контроль противника: ${Math.round(r.controlAfter)}%.`, id);
-    if (Y && !r.capitulated) {
-      this.log('mil', r.ratio >= 1 ? 'Оборона прорвана' : 'Атака отбита',
-        `${POWERS[X].name} атакует: ${c.name}. Наши потери: ${U.fmt(r.enemyLost, 0)} див., контроль ${Math.round(c.control)}%.`, id, Y);
-    }
-    Bus.emit('battle', r);
-    if (Y) Bus.emit('enemyAttack', { by: X, srcId: MapView_srcFor(id, X), targetId: id, ratio: r.ratio, power: Y, controlDrop: r.controlDrop, control: c.control });
-    Bus.emit('mapDirty');
+    if (Y) this.log('alert', 'Вражеское наступление', `${POWERS[this.cur].name}: ${a.name} переходит в наступление. Направление: ${c.name}.`, c.id, Y);
+    this.log('mil', 'Наступление начато', `${a.name} атакует. Направление: ${c.name}.`, c.id);
     Bus.emit('stateChanged');
-    this.checkEnd();
-    return { ok: true };
+    return { ok: true, msg: `${a.name}: наступление — ${c.name}` };
+  },
+
+  /* --- Ежедневная жизнь армий державы (марш, отдых) --- */
+  tickArmies() {
+    const P = this.P(), m = this.mods;
+    for (const a of P.armies) {
+      const o = a.order;
+      if (o.type === 'move') {
+        a.org = Math.min(100, a.org + m.orgRegen * 0.5);
+        if (--o.left > 0) continue;
+        const next = o.path.shift();
+        const c = this.c(next);
+        if (!c || c.ctrl !== this.cur) {
+          a.order = { type: 'hold' };
+          this.log('mil', 'Марш прерван', `${a.name} остановилась: путь отрезан.`, a.loc);
+          continue;
+        }
+        a.loc = next;
+        if (o.path.length) o.left = this.stepDays(a.loc, o.path[0]);
+        else {
+          a.order = { type: 'hold' };
+          this.log('mil', 'Армия на позициях', `${a.name} заняла оборону: ${c.name}.`, c.id);
+        }
+      } else if (o.type === 'hold') {
+        a.org = Math.min(100, a.org + m.orgRegen);
+      }
+    }
+  },
+
+  /* --- Ежедневные сражения: все армии одной державы, атакующие одну цель, бьются вместе --- */
+  tickBattles() {
+    for (const X of this.alive()) {
+      this.as(X, () => {
+        const groups = {};
+        for (const a of this.armies()) {
+          if (a.order.type !== 'attack') continue;
+          const c = this.c(a.order.target);
+          const adj = (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(a.order.target);
+          if (!c || c.ctrl === X || !this.atWar(c) || !adj) { this.finishBattle(a, 'invalid'); continue; }
+          (groups[c.id] = groups[c.id] || []).push(a);
+        }
+        for (const [id, list] of Object.entries(groups)) this.battleDay(this.c(id), list);
+      });
+    }
+  },
+
+  battleDay(c, list) {
+    const X = this.cur, P = this.P(), Y = this.powerOf(c);
+    const r = Combat.battleDay(c, list);
+    const total = list.reduce((s, a) => s + a.divs, 0);
+    for (const a of list) {
+      const share = a.divs / total;
+      const lost = r.attLoss * share;
+      a.divs = Math.max(0, a.divs - lost);
+      a.org = Math.max(0, a.org - r.orgLoss);
+      const b = a.battle;
+      b.days++; b.attLost += lost; b.defLost += r.defLoss * share; b.ratioSum += r.ratio; b.last = r;
+    }
+    P.stats.divLost += r.attLoss;
+    P.stats.enemyKilled += r.defLoss;
+    if (Y) this.takeLosses(c, Y, r.defLoss);
+    else c.divs = Math.max(0, c.divs - r.defLoss);
+    c.control = Math.max(0, c.control - r.ctrlDrop);
+    if (Y && r.ratio >= 1 && c.control < 50 && !c.alerted) {
+      c.alerted = true;
+      this.log('alert', 'Фронт трещит', `Противник (${POWERS[X].name}) прорывает оборону: ${c.name}, контроль ${Math.round(c.control)}%.`, c.id, Y);
+    }
+
+    // Захват территории: армии входят в неё, фронт сдвигается
+    if (c.control <= 0 || (!Y && c.divs < 0.5)) {
+      const gained = Y ? this.transferLand(c, X) : this.capitulate(c, X);
+      if (Y) this.log('alert', 'Территория потеряна', `Противник (${POWERS[X].name}) захватил: ${c.name}.`, c.id, Y);
+      list.forEach((a, i) => { a.loc = c.id; this.finishBattle(a, 'captured', gained, i > 0); });
+      this.addTension(c.major ? 2 : 1);
+      Bus.emit('mapDirty');
+    } else {
+      list.forEach(a => { if (a.org < CFG.ARMY.haltOrg || a.divs < 0.5) this.finishBattle(a, 'halted'); });
+    }
+    this.cleanArmies(X);
+  },
+
+  // Итог наступления: сводка (как раньше после боя) и запись в журнал
+  finishBattle(a, result, gained = 0, quiet = false) {
+    const b = a.battle;
+    a.battle = null;
+    a.order = { type: 'hold' };
+    if (!b || !b.days) return;
+    const c = this.c(b.target);
+    const P = this.P(), X = this.cur;
+    const avg = b.ratioSum / b.days;
+    const last = b.last;
+    if (result === 'captured') P.stats.won++; else if (result === 'halted') P.stats.lost++;
+    const title = { captured: 'Территория взята', halted: 'Наступление выдохлось', stopped: 'Наступление остановлено', invalid: 'Наступление прекращено' }[result];
+    this.log(result === 'captured' ? 'success' : 'mil', `${a.name}: ${title.toLowerCase()}`,
+      `Направление: ${c.name}. ${U.days(b.days)} боёв, наши потери ${U.fmt(b.attLost, 1)} див., противник ${U.fmt(b.defLost, 1)} див.`, c.id);
+    if (quiet || (result !== 'captured' && result !== 'halted')) return;
+    const Y = last.defender;
+    Bus.emit('battle', {
+      kind: 'offensive', by: X, defender: Y, result,
+      op: a.name, general: a.general, days: b.days,
+      date: this.S.date, targetId: c.id, targetName: c.name, targetFaction: c.faction,
+      targetColor: Y ? POWERS[Y].color : null,
+      att: Object.assign({}, last.att, { divs: Math.round(a.divs + b.attLost) }),
+      def: last.def,
+      ratio: avg, outcome: Combat.outcomeFor(result === 'captured' ? Math.max(avg, 1) : Math.min(avg, 0.99)),
+      playerLost: Math.round(b.attLost * 10) / 10, playerMPLost: Math.round(b.attLost * CFG.DIV.mp),
+      enemyLost: Math.round(b.defLost * 10) / 10, enemyAfter: Y ? this.landDefenders(c, Y) : c.divs,
+      controlBefore: b.ctrlStart, controlAfter: result === 'captured' ? 0 : c.control,
+      capitulated: result === 'captured', captured: result === 'captured' && !!Y, liberation: c.core === X,
+      annexedFactories: gained, loot: 0, resilience: last.resilience,
+      orgCost: Math.round(b.orgStart - a.org), orgLeft: a.org, tension: 0, ppGain: 0
+    });
+  },
+
+  // Армии державы Y на потерянной земле отступают на соседнюю свою землю (или гибнут в окружении)
+  retreatArmies(c, Y) {
+    const A = this.armiesAt(c.id, Y);
+    if (!A.length) return;
+    const back = (Geo.meta[c.id] || { neighbors: [] }).neighbors.map(n => this.c(n)).find(t => t && t.ctrl === Y);
+    for (const a of A) {
+      if (a.battle) this.as(Y, () => this.finishBattle(a, 'invalid', 0, true));
+      a.order = { type: 'hold' };
+      if (back) {
+        a.loc = back.id;
+        a.divs *= 0.8;
+        a.org = 0;
+        this.log('alert', 'Отступление', `${a.name} отступила с потерями: ${back.name}.`, back.id, Y);
+      } else {
+        a.divs = 0;
+        this.log('alert', 'Котёл', `${a.name} попала в окружение и уничтожена: ${c.name}.`, c.id, Y);
+      }
+    }
+    this.cleanArmies(Y);
   },
 
   /* Капитуляция ИИ-страны: она и все подконтрольные ей земли переходят державе X.
@@ -808,6 +1056,7 @@ const Game = {
 
   // Передача земли державе X. Свои исконные земли возвращаются без потерь.
   transferLand(c, X, opts = {}) {
+    const prev = c.ctrl;
     const liberation = c.core === X;
     const keep = c.radioactive ? 0 : Math.floor(c.factories * (opts.peaceful || liberation ? 1 : 0.6));
     c.factories = keep;
@@ -817,6 +1066,8 @@ const Game = {
     c.divs = 0; c.control = 100; c.sab = 0; c.sabDays = 0;
     c.intel[X] = 100;
     c.lostFrom = null;
+    c.alerted = false;
+    if (this.isPower(prev) && prev !== X) this.retreatArmies(c, prev);
     Bus.emit('mapDirty');
     return keep;
   },
@@ -825,14 +1076,13 @@ const Game = {
   enemyOffensive(src, target) {
     const S = this.S, Y = target.ctrl, P = this.P(Y);
     const r = Combat.resolveEnemyOffensive(src, target);
-    P.divs = Math.max(0, P.divs - r.playerLost);
+    r.playerLost = Math.round(this.takeLosses(target, Y, r.playerLost) * 10) / 10;
     src.divs = Math.max(0, src.divs - r.enemyLost);
     // Высадкой через пролив можно измотать оборону, но не захватить территорию целиком
     const floor = r.sea ? 25 : 0;
     const before = target.control;
     target.control = Math.max(Math.min(target.control, floor), target.control - r.controlDrop);
     r.controlDrop = Math.round(before - target.control);
-    P.stats.divLost += r.playerLost;
     if (r.ratio >= 1) {
       this.log('mil', r.sea ? 'Вражеский десант' : 'Вражеское наступление',
         `${src.name} атакует. Направление: ${target.name}. Контроль −${r.controlDrop}%, наши потери: ${r.playerLost} див.`, target.id, Y);
@@ -857,6 +1107,7 @@ const Game = {
     t.fort = Math.max(0, t.fort - 1);
     t.intel[Y] = 60;
     t.lostFrom = Y;
+    this.retreatArmies(t, Y);
     this.log('alert', 'Территория потеряна', `Фронт прорван. Под контролем противника (${occ.name}): ${t.name}.`, t.id, Y);
     Bus.emit('mapDirty');
     if (t.id !== POWERS[Y].capital) {
@@ -1060,15 +1311,12 @@ const Game = {
     P.warheads--;
     P.stats.nukes++;
     const Y = this.powerOf(c);
-    const before = { factories: c.factories, divs: Y ? this.powerDefenders(Y) : c.divs, control: c.control };
+    const before = { factories: c.factories, divs: Y ? this.landDefenders(c, Y) : c.divs, control: c.control };
     const wasWar = this.atWar(c);
     const faction = c.faction;
     this.applyNuclearDamage(c, true);
-    if (Y) {
-      const PY = this.P(Y), lost = Math.min(PY.divs, Math.round(this.powerDefenders(Y) * (this.mods.thermo ? 1 : 0.85)));
-      PY.divs -= lost;
-    }
-    const after = { factories: c.factories, divs: Y ? this.powerDefenders(Y) : c.divs, control: c.control };
+    if (Y) this.takeLosses(c, Y, this.landDefenders(c, Y) * (this.mods.thermo ? 1 : 0.85));
+    const after = { factories: c.factories, divs: Y ? this.landDefenders(c, Y) : c.divs, control: c.control };
     const dt = faction === 'NEU' ? 35 : CFG.NUKE_TENSION;
     this.addTension(dt);
 
@@ -1170,6 +1418,48 @@ const Game = {
   },
 
   /* --- Национальные фокусы --- */
+  // Разовые эффекты фокуса: заводы, призывники, поводы для войны, союзники, присоединение, новые армии
+  applyFocusOnce(f) {
+    const fx = f.fx, X = this.cur;
+    if (fx.addFactories) this.addFactories(fx.addFactories);
+    if (fx.addMP) this.addMP(fx.addMP);
+    if (fx.addDivs) this.addDivs(fx.addDivs);
+    if (fx.addPP) this.addPP(fx.addPP);
+    if (fx.tension) this.addTension(fx.tension);
+    if (fx.claims) {
+      const ids = fx.claims === 'neighbors'
+        ? [...new Set(this.lands().flatMap(c => Geo.meta[c.id] ? Geo.meta[c.id].neighbors : []))]
+        : fx.claims;
+      const got = [];
+      for (const id of ids) {
+        const c = this.c(id);
+        if (!c || c.inert || c.ctrl === X || this.isAlly(c) || this.atWar(c) || (c.ctrl !== c.id && !this.isPower(c.ctrl))) continue;
+        c.cb[X] = true;
+        got.push(c.name);
+      }
+      if (got.length) this.log('dip', 'Поводы для войны', 'Получены претензии: ' + got.join(', ') + '.');
+    }
+    if (fx.allies) {
+      for (const id of fx.allies) {
+        const c = this.c(id);
+        if (c && c.ctrl === c.id && c.faction === 'NEU' && !this.tags().some(t => c.wars[t])) this.setFaction(id, POWERS[X].allyFaction);
+      }
+    }
+    if (fx.annex) {
+      for (const id of fx.annex) {
+        const c = this.c(id);
+        if (c && this.isAlly(c)) {
+          this.transferLand(c, X, { peaceful: true });
+          this.log('success', 'Мирное объединение', c.name + ' входит в состав державы.', id);
+        }
+      }
+    }
+    if (fx.army) {
+      const a = this.newArmy(X, fx.army.name, fx.army.divs);
+      this.log('mil', 'Новая армия', a.name + ' (' + U.divs(fx.army.divs) + ', командующий ' + a.general + ') развёрнута в столице.', a.loc);
+    }
+    Bus.emit('mapDirty');
+  },
   focusState(f) {
     const P = this.P();
     if (P.focuses.includes(f.id)) return 'done';
@@ -1190,7 +1480,7 @@ const Game = {
   },
   startFocus(id) {
     const f = FOCUS_BY_ID[id];
-    if (!f) return this.fail('Неизвестный фокус');
+    if (!f || !this.focusTree().includes(f)) return this.fail('Этот фокус не из вашего дерева');
     const why = this.canFocus(f);
     if (why) return this.fail(why);
     this.P().focus = { id, daysLeft: f.days, total: f.days };

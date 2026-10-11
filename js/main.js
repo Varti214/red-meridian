@@ -108,6 +108,8 @@
       const saved = U.storage.get('meridian_map_mode');
       const mode = MapView.init(document.getElementById('map-root'), saved === 'flat' ? 'flat' : 'globe', {
         click: id => UI.mapClick(id),
+        right: id => UI.mapRight(id),
+        army: (id, tag) => UI.armyClick(id, tag),
         hover: id => UI.mapHover(id)
       });
       UI.el.mapMode.querySelector('span').textContent = mode === 'globe' ? '2D-карта' : '3D-глобус';

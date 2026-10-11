@@ -204,6 +204,83 @@ const Geo = {
 
   isSea(a, b) { return !!this.sea && this.sea.has(a + '|' + b); },
 
+  /* Линия общей границы a и b (со стороны a): берём вершины контура a,
+     лежащие рядом с контуром b, и склеиваем подряд идущие в ломаные.
+     Если граница морская (пролив) — короткий отрезок между ближайшими точками. */
+  borderCache: {},
+  borderLines(a, b) {
+    const key = a + '|' + b;
+    if (this.borderCache[key]) return this.borderCache[key];
+    const fa = this.byId[a], fb = this.byId[b];
+    if (!fa || !fb) return [];
+    const CELL = 0.5, TH2 = 0.45 * 0.45;
+    const grid = new Map();
+    for (const ring of this.outerRings(fb.geometry)) {
+      for (const [x, y] of ring) {
+        const k = Math.floor(x / CELL) + ':' + Math.floor(y / CELL);
+        if (!grid.has(k)) grid.set(k, []);
+        grid.get(k).push(x, y);
+      }
+    }
+    const near = (x, y) => {
+      const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL), cl = Math.cos(y * Math.PI / 180);
+      for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+        const pts = grid.get((cx + ox) + ':' + (cy + oy));
+        if (!pts) continue;
+        for (let i = 0; i < pts.length; i += 2) {
+          const dx = (pts[i] - x) * cl, dy = pts[i + 1] - y;
+          if (dx * dx + dy * dy < TH2) return true;
+        }
+      }
+      return false;
+    };
+    const lines = [];
+    for (const ring of this.outerRings(fa.geometry)) {
+      const n = ring.length - 1;                       // последняя точка кольца = первая
+      const mark = ring.slice(0, n).map(([x, y]) => near(x, y));
+      if (!mark.some(Boolean)) continue;
+      // Начинаем обход с не отмеченной точки, чтобы не разорвать отрезок на стыке кольца
+      let start = mark.indexOf(false);
+      if (start < 0) { lines.push(ring.map(([x, y]) => [y, x])); continue; }
+      let cur = [];
+      for (let k = 1; k <= n; k++) {
+        const i = (start + k) % n;
+        if (mark[i]) cur.push([ring[i][1], ring[i][0]]);
+        else if (cur.length) { if (cur.length > 1) lines.push(cur); cur = []; }
+      }
+      if (cur.length > 1) lines.push(cur);
+    }
+    if (!lines.length && this.isSea(a, b)) {
+      // Пролив: соединяем ближайшие точки двух берегов
+      let best = null, bd = Infinity;
+      for (const ra of this.outerRings(fa.geometry)) for (const [x1, y1] of ra) {
+        for (const rb of this.outerRings(fb.geometry)) for (let i = 0; i < rb.length; i += 3) {
+          const [x2, y2] = rb[i];
+          let dx = Math.abs(x1 - x2); if (dx > 180) dx = 360 - dx;
+          const d = dx * dx + (y1 - y2) * (y1 - y2);
+          if (d < bd) { bd = d; best = [[y1, x1], [y2, x2]]; }
+        }
+      }
+      if (best) lines.push(Object.assign(best, { sea: true }));
+    }
+    this.borderCache[key] = lines;
+    return lines;
+  },
+
+  // Середина самого длинного участка границы a—b (для фишки армии), сдвинутая вглубь a
+  frontAnchor(a, b, inward = 0.3) {
+    const lines = this.borderLines(a, b);
+    const ca = this.meta[a] && this.meta[a].centroid;
+    if (!lines.length || !ca) return ca;
+    const longest = lines.reduce((m, l) => (l.length > m.length ? l : m), lines[0]);
+    const mid = longest[Math.floor(longest.length / 2)];
+    let dl = ca.lng - mid[1];
+    if (dl > 180) dl -= 360;
+    if (dl < -180) dl += 360;
+    const k = Math.min(inward, 6 / Math.max(1, Math.hypot(dl, ca.lat - mid[0])));   // не дальше ~6° от границы
+    return { lat: mid[0] + (ca.lat - mid[0]) * k, lng: mid[1] + dl * k };
+  },
+
   // Расстояние по большой окружности, в градусах дуги
   arcDistance(a, b) {
     const r = Math.PI / 180;

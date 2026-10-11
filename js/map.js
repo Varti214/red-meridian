@@ -23,6 +23,9 @@ const MapView = {
   pending: false,
   onClick: () => {},
   onHover: () => {},
+  onArmy: () => {},          // клик по фишке армии
+  onRight: () => {},         // правый клик по стране (приказ выбранной армии)
+  selectedArmy: null,
 
   webglAvailable() {
     try {
@@ -36,6 +39,8 @@ const MapView = {
     this.el = el;
     this.onClick = handlers.click;
     this.onHover = handlers.hover;
+    this.onArmy = handlers.army || (() => {});
+    this.onRight = handlers.right || (() => {});
     return this.setMode(mode);
   },
 
@@ -101,6 +106,28 @@ const MapView = {
 
   focus(id) { this.impl && Geo.meta[id] && this.impl.focus(id); },
 
+  setSelectedArmy(id) {
+    this.selectedArmy = id;
+    this.impl && this.impl.refreshPolygons();
+    this.refreshArmies(true);
+  },
+
+  // Фишки армий и линии фронта обновляются каждый игровой день, но не чаще 4 раз в секунду
+  refreshArmies(force) {
+    if (!this.impl) return;
+    const now = performance.now();
+    if (!force && now - (this.lastArmies || 0) < 250) return;
+    this.lastArmies = now;
+    try { this.impl.refreshOverlays(); } catch (e) { console.error('[Map] armies', e); }
+  },
+
+  // Земли, куда выбранная армия может наступать (соседи, с которыми война)
+  armyTargets() {
+    const a = this.selectedArmy && Game.army(this.selectedArmy, Game.me);
+    if (!a) return null;
+    return new Set((Geo.meta[a.loc] || { neighbors: [] }).neighbors.filter(n => Game.atWar(Game.c(n), Game.me)));
+  },
+
   /* ---- Единая логика стиля страны для обоих рендереров ---- */
   style(id) {
     const c = Game.S && Game.c(id);
@@ -121,9 +148,12 @@ const MapView = {
 
     let strokeColor = U.rgba(stroke, 0.55);
     if (c.cb[me]) strokeColor = COLORS.justify;
+    const targets = this.armyTargetsCache;
+    const target = targets && targets.has(id);
+    if (target) strokeColor = '#ffe14d';
     if (sel) strokeColor = COLORS.selected;
 
-    const alt = 0.006 + (Game.isPower(c.ctrl) ? 0.004 : 0) + (front ? 0.006 : 0) + (hov ? 0.008 : 0) + (sel ? 0.016 : 0);
+    const alt = 0.006 + (Game.isPower(c.ctrl) ? 0.004 : 0) + (front ? 0.006 : 0) + (hov ? 0.008 : 0) + (sel ? 0.016 : 0) + (target ? 0.006 : 0);
     return { cap, capA: U.rgba(cap, 0.93), side: U.rgba(side, 0.9), stroke: strokeColor, alt };
   },
 
@@ -148,21 +178,90 @@ const MapView = {
     return out;
   },
 
-  /* ---- Дуги фронтов: от ближайшей нашей земли к фронту ---- */
+  /* ---- Стрелки наступлений: от фишки армии к цели ---- */
   frontArcs() {
     const out = [];
-    if (!Game.S) return out;
-    // Дуги — только к фронтам, граничащим с нами (иначе война с державой рисует дуги через весь мир)
-    const all = Game.fronts(Game.me);
-    const near = all.filter(f => Game.bordersPower(f.id, Game.me));
-    for (const f of (near.length ? near : all)) {
-      const to = Geo.meta[f.id].centroid;
-      const from = this.sourceFor(f.id);
+    if (!Game.S || !Game.P(Game.me)) return out;
+    for (const a of Game.armies(Game.me)) {
+      if (a.order.type !== 'attack') continue;
+      const from = this.armyPos(a, Game.me), to = Geo.meta[a.order.target] && Geo.meta[a.order.target].centroid;
+      if (!from || !to) continue;
+      const sel = a.id === this.selectedArmy;
       out.push({
         sLat: from.lat, sLng: from.lng, eLat: to.lat, eLng: to.lng,
-        color: ['rgba(255,70,40,0.85)', 'rgba(255,200,70,0.95)'], stroke: 0.55, dash: 0.35, gap: 0.18, time: 2200, init: 0
+        color: ['rgba(255,60,40,0.95)', 'rgba(255,215,90,1)'], stroke: sel ? 0.45 : 0.3, dash: 0.4, gap: 0.12, time: 1100, init: 0
       });
-      if (out.length >= 14) break;
+    }
+    return out;
+  },
+
+  /* ---- Линия фронта: участки границы между нашими землями и врагом ---- */
+  frontLines() {
+    const out = [];
+    if (!Game.S || !Game.P(Game.me)) return out;
+    const me = Game.me;
+    const attacking = new Set(Game.armies(me).filter(a => a.order.type === 'attack').map(a => a.loc + '>' + a.order.target));
+    for (const c of Game.lands(me)) {
+      for (const n of (Geo.meta[c.id] || { neighbors: [] }).neighbors) {
+        const e = Game.c(n);
+        if (!e || !Game.atWar(e, me)) continue;
+        const hot = attacking.has(c.id + '>' + n);
+        for (const pts of Geo.borderLines(c.id, n)) {
+          out.push({ pts, color: hot ? ['#ffe14d', '#ff2d1f'] : ['#ff1f1f', '#b30000'], w: hot ? 4.5 : 3,
+            dash: pts.sea ? 0.03 : 1, gap: pts.sea ? 0.02 : 0, time: pts.sea ? 0 : 0 });
+        }
+      }
+    }
+    return out;
+  },
+
+  /* ---- Маршруты армий на марше ---- */
+  movePaths() {
+    const out = [];
+    if (!Game.S || !Game.P(Game.me)) return out;
+    for (const a of Game.armies(Game.me)) {
+      if (a.order.type !== 'move' || !a.order.path.length) continue;
+      const pts = [this.armyPos(a, Game.me)].concat(a.order.path.map(id => Geo.meta[id].centroid)).map(p => [p.lat, p.lng]);
+      out.push({ pts, color: ['rgba(255,255,255,0.9)', 'rgba(160,220,255,0.9)'], w: 2, dash: 0.02, gap: 0.015, time: 4000 });
+    }
+    return out;
+  },
+
+  /* ---- Где на карте стоит фишка армии ---- */
+  armyPos(a, tag) {
+    const loc = a.loc;
+    if (a.order.type === 'attack') return Geo.frontAnchor(loc, a.order.target, 0.25);
+    // В обороне: у границы с ближайшим врагом, иначе в центре земли
+    const enemy = (Geo.meta[loc] || { neighbors: [] }).neighbors.find(n => Game.atWar(Game.c(n), tag));
+    if (enemy) return Geo.frontAnchor(loc, enemy, 0.3);
+    return Geo.meta[loc] && Geo.meta[loc].centroid;
+  },
+
+  /* ---- Фишки армий: свои (кликабельные) и армии других игроков у наших границ ---- */
+  armyMarkers() {
+    const out = [];
+    if (!Game.S || !Game.P(Game.me)) return out;
+    const me = Game.me, stack = {};
+    for (const tag of Game.tags()) {
+      for (const a of Game.armies(tag)) {
+        const mine = tag === me;
+        if (!mine) {
+          // Чужую армию видно, только если она стоит у наших границ или на нашей земле
+          const loc = Game.c(a.loc);
+          if (!loc || !(Game.bordersPower(a.loc, me) || loc.ctrl === me)) continue;
+        }
+        const p = this.armyPos(a, tag);
+        if (!p) continue;
+        const k = Math.round(p.lat * 2) + ':' + Math.round(p.lng * 2);
+        const i = stack[k] = (stack[k] || 0) + 1;
+        const intel = mine ? 100 : Game.intel(Game.c(a.loc), me);
+        out.push({
+          key: 'army-' + a.id, kind: 'army', id: a.id, tag, mine,
+          lat: p.lat - (i - 1) * 1.1, lng: p.lng,
+          divs: mine || intel >= 80 ? String(Math.round(a.divs)) : '~' + Math.max(5, Math.round(a.divs / 5) * 5),
+          org: a.org, name: a.name, order: a.order.type, sel: a.id === this.selectedArmy
+        });
+      }
     }
     return out;
   },
@@ -234,6 +333,10 @@ const GlobeRenderer = {
       .onPolygonHover(f => MapView.onHover(f ? id(f) : null))
       .onPolygonClick(f => MapView.onClick(id(f)))
       .onGlobeClick(() => MapView.onClick(null))
+      .onPolygonRightClick(f => MapView.onRight(id(f)))
+      .pathPoints('pts').pathPointLat(p => p[0]).pathPointLng(p => p[1]).pathPointAlt(0.013)
+      .pathColor('color').pathStroke('w').pathDashLength('dash').pathDashGap('gap').pathDashAnimateTime('time')
+      .pathTransitionDuration(0)
       .arcStartLat('sLat').arcStartLng('sLng').arcEndLat('eLat').arcEndLng('eLng')
       .arcColor('color').arcStroke('stroke')
       .arcDashLength('dash').arcDashGap('gap').arcDashInitialGap('init').arcDashAnimateTime('time')
@@ -293,6 +396,7 @@ const GlobeRenderer = {
 
   refreshPolygons() {
     if (!this.g) return;
+    MapView.armyTargetsCache = MapView.armyTargets();
     const st = f => MapView.style(f.properties.id);
     this.g.polygonCapColor(f => st(f).capA)
       .polygonSideColor(f => st(f).side)
@@ -303,11 +407,13 @@ const GlobeRenderer = {
   refreshOverlays() {
     if (!this.g) return;
     this.g.arcsData(MapView.frontArcs().concat(this.tempArcs));
+    this.g.pathsData(MapView.frontLines().concat(MapView.movePaths()));
     this.g.ringsData(this.tempRings.slice());
-    this.g.htmlElementsData(MapView.markers());
+    this.g.htmlElementsData(MapView.markers().concat(MapView.armyMarkers()));
   },
 
   markerEl(d) {
+    if (d.kind === 'army') return this.armyEl(d);
     let el = this.markerEls.get(d.key);
     if (!el) {
       el = document.createElement('div');
@@ -315,6 +421,20 @@ const GlobeRenderer = {
       el.innerHTML = `<svg><use href="#${d.icon}"/></svg>`;
       this.markerEls.set(d.key, el);
     }
+    return el;
+  },
+
+  // Фишка армии (как в HOI4): знак НАТО, число дивизий, полоска организации
+  armyEl(d) {
+    let el = this.markerEls.get(d.key);
+    if (!el) {
+      el = document.createElement('div');
+      el.addEventListener('mousedown', e => e.stopPropagation());
+      el.addEventListener('click', e => { e.stopPropagation(); MapView.onArmy(el.dataset.id, el.dataset.tag); });
+      el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); });
+      this.markerEls.set(d.key, el);
+    }
+    fillArmyEl(el, d);
     return el;
   },
 
@@ -555,10 +675,15 @@ const FlatRenderer = {
       }
     });
     this.on(window, 'mouseup', e => {
-      if (this.drag && !this.drag.moved && e.target === cv) MapView.onClick(this.hit(e));
+      if (this.drag && !this.drag.moved && e.target === cv) {
+        const army = this.hitArmy(e);
+        if (army) MapView.onArmy(army.id, army.tag);
+        else MapView.onClick(this.hit(e));
+      }
       this.drag = null;
     });
     this.on(cv, 'mouseleave', () => { if (!this.drag) MapView.onHover(null); });
+    this.on(cv, 'contextmenu', e => { e.preventDefault(); const id = this.hit(e); if (id) MapView.onRight(id); });
     this.on(cv, 'wheel', e => {
       e.preventDefault();
       const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
@@ -586,7 +711,12 @@ const FlatRenderer = {
   },
 
   refresh() { this.dirty = true; },
-  refreshPolygons() { this.dirty = true; },
+  refreshPolygons() { MapView.armyTargetsCache = MapView.armyTargets(); this.dirty = true; },
+  refreshOverlays() { this.dirty = true; },
+  hitArmy(e) {
+    const r = this.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    return (this.armyBoxes || []).find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) || null;
+  },
 
   focus(id) {
     const m = Geo.meta[id];
@@ -651,8 +781,10 @@ const FlatRenderer = {
     }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.drawFrontLines(ctx, now);
     this.drawArcs(ctx, now);
     this.drawMarkers(ctx);
+    this.drawArmies(ctx);
     this.drawEffects(ctx, now);
   },
 
@@ -675,6 +807,46 @@ const FlatRenderer = {
       ctx.stroke();
     }
     ctx.setLineDash([]);
+  },
+
+  drawFrontLines(ctx, now) {
+    for (const l of MapView.frontLines().concat(MapView.movePaths())) {
+      ctx.beginPath();
+      l.pts.forEach(([lat, lng], i) => { const [x, y] = this.toScreen(lng, lat); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+      const move = l.w < 2.5;
+      ctx.setLineDash(move || l.pts.sea ? [6, 5] : []);
+      ctx.lineDashOffset = move ? -(now / 60) % 11 : 0;
+      ctx.strokeStyle = Array.isArray(l.color) ? l.color[0] : l.color;
+      ctx.lineWidth = move ? 2 : l.w > 4 ? 4 : 3;
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  },
+
+  drawArmies(ctx) {
+    this.armyBoxes = [];
+    ctx.font = '700 11px "Bahnschrift", "Segoe UI", sans-serif';
+    ctx.textBaseline = 'middle';
+    for (const d of MapView.armyMarkers()) {
+      const [cx, cy] = this.toScreen(d.lng, d.lat);
+      const w = 46, h = 22, x = cx - w / 2, y = cy - h / 2;
+      ctx.fillStyle = d.sel ? '#ffe680' : POWERS[d.tag].color;
+      ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+      ctx.fillStyle = 'rgba(6,10,16,0.92)';
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = POWERS[d.tag].stroke;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 3, y + 4, 14, 10);
+      ctx.beginPath(); ctx.moveTo(x + 3, y + 4); ctx.lineTo(x + 17, y + 14); ctx.moveTo(x + 17, y + 4); ctx.lineTo(x + 3, y + 14); ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'left';
+      ctx.fillText(d.divs, x + 21, y + 9);
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.fillRect(x + 2, y + h - 4, w - 4, 2);
+      ctx.fillStyle = d.org < 35 ? '#f08a24' : '#4fc97a';
+      ctx.fillRect(x + 2, y + h - 4, (w - 4) * d.org / 100, 2);
+      if (d.mine) this.armyBoxes.push({ x, y, w, h, id: d.id, tag: d.tag });
+    }
   },
 
   drawMarkers(ctx) {
@@ -764,3 +936,16 @@ const FlatRenderer = {
     this.addFx({ type: 'ring', lat: to.lat, lng: to.lng, r: 120, rgb: '255,220,160', dur: 3500, t0 });
   }
 };
+
+// Содержимое фишки армии: знак пехоты НАТО (прямоугольник с крестом), число дивизий, организация
+function fillArmyEl(el, d) {
+  el.className = 'army-cnt' + (d.mine ? ' mine' : ' foreign') + (d.sel ? ' sel' : '') +
+    (d.order === 'attack' ? ' attacking' : d.order === 'move' ? ' moving' : '');
+  el.dataset.id = d.id;
+  el.dataset.tag = d.tag;
+  el.style.setProperty('--pc', POWERS[d.tag].color);
+  el.title = d.name + (d.mine ? '' : ' (' + POWERS[d.tag].name + ')');
+  const html = `<svg class="nato" viewBox="0 0 16 11"><rect x=".5" y=".5" width="15" height="10"/><path d="M.5 .5l15 10M15.5 .5l-15 10"/></svg>` +
+    `<b>${d.divs}</b><span class="org"><i style="width:${Math.round(d.org)}%"></i></span>`;
+  if (el._h !== html) { el.innerHTML = html; el._h = html; }
+}

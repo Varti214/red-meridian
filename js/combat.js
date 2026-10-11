@@ -1,11 +1,12 @@
 'use strict';
 /* ============================================================
    БОЕВОЙ КАЛЬКУЛЯТОР
-   Сила = база × множители × бросок 2d6.
-   Бросок 2d6 даёт множитель от ×0,80 (сумма 2) до ×1,30 (сумма 12).
-   Исход определяется отношением сил атакующего и обороняющегося.
-   Обороняется либо ИИ-страна (своим гарнизоном), либо держава игрока —
-   тогда её армия делится между всеми враждебными границами.
+   Сражение идёт КАЖДЫЙ ДЕНЬ, пока армия наступает:
+     сила = база × множители × бросок 2d6 (от ×0,80 до ×1,30);
+     по соотношению сил считаются потери, падение контроля врага
+     и расход организации наступающих.
+   Обороняется ИИ-страна (своим гарнизоном) или держава игрока —
+   тогда только армии, стоящие на этой земле (и резерв в столице).
    ============================================================ */
 
 const Combat = {
@@ -28,11 +29,11 @@ const Combat = {
 
   outcomeFor(ratio) { return this.OUTCOMES.find(o => ratio >= o.min); },
 
-  /* --- Сила атаки текущей державы (Game.cur) --- */
-  attackBreakdown(target, commit) {
-    const P = Game.P(), m = Game.mods;
-    const base = commit * CFG.DIV.attack;
-    const lines = [{ label: `${commit} див. × ${CFG.DIV.attack}`, value: base }];
+  /* --- Сила атаки армий текущей державы (Game.cur) --- */
+  attackBreakdown(target, divs, org, fromLoc) {
+    const m = Game.mods;
+    const base = divs * CFG.DIV.attack;
+    const lines = [{ label: `${U.fmt(divs, 1)} див. × ${CFG.DIV.attack}`, value: base }];
     let mult = 1;
     const add = (label, k) => {
       if (Math.abs(k - 1) < 0.001) return;
@@ -41,10 +42,9 @@ const Combat = {
     };
     add('Танковые технологии', m.attack);
     add('Военная доктрина', 1 + m.attackBonus);
-    add(`Организация ${Math.round(P.org)}%`, 0.4 + 0.6 * P.org / 100);
-    const sup = Game.supplyFactor(target.id);
-    add(sup === 0.8 ? 'Форсирование пролива' : 'Десант без общей границы', sup);
-    return { base, mult, total: base * mult, lines };
+    add(`Организация ${Math.round(org)}%`, 0.4 + 0.6 * org / 100);
+    if (fromLoc) add('Форсирование пролива', Game.armySupply(fromLoc, target.id));
+    return { base, mult, total: base * mult, lines, divs };
   },
 
   /* --- Оборона. divsOverride — для оценки по разведданным --- */
@@ -77,10 +77,11 @@ const Combat = {
     return { base, mult, total: base * mult, lines, divs };
   },
 
-  /* --- Оборона земли, которой владеет держава игрока Y --- */
+  /* --- Оборона земли державы Y: армии на этой земле + ополчение --- */
   powerDefense(target, Y, divsOverride) {
-    const PY = Game.P(Y), mY = Game.modsFor(Y);
-    const defenders = divsOverride != null ? divsOverride : Game.powerDefenders(Y);
+    const mY = Game.modsFor(Y);
+    const defenders = divsOverride != null ? divsOverride : Game.landDefenders(target, Y);
+    const org = Game.landOrg(target, Y);
     const core = target.core === Y;
     const capital = target.id === POWERS[Y].capital;
     const divPart = defenders * CFG.DIV.defense;
@@ -97,8 +98,9 @@ const Combat = {
       mult *= k;
     };
     add(`Укрепления ур. ${target.fort}`, 1 + 0.15 * target.fort);
-    add(`Организация ${Math.round(PY.org)}%`, 0.55 + 0.45 * PY.org / 100);
+    add(`Организация ${Math.round(org)}%`, 0.55 + 0.45 * org / 100);
     add('Бронетехника в обороне', 1 + (mY.attack - 1) * 0.5);
+    add('Оборонная доктрина', 1 + mY.defense);
     add('Родные стены', core ? 1.25 : 1);
     add('Стратегическая глубина столицы', capital ? 1.5 : 1);
     add('Саботаж', 1 - target.sab);
@@ -106,73 +108,73 @@ const Combat = {
     return { base, mult, total: base * mult, lines, divs: defenders, power: Y };
   },
 
-  /* --- Точный расчёт шансов: перебираем все 36×36 комбинаций бросков --- */
-  estimate(target, commit) {
-    const att = this.attackBreakdown(target, commit);
-    const est = Game.estDivs(target);
-    const def = this.defenseBreakdown(target, est.mid);
-    let pWin = 0, pBreak = 0;
-    for (const [sa, pa] of Object.entries(U.DIST_2D6)) {
-      for (const [sd, pd] of Object.entries(U.DIST_2D6)) {
-        const r = (att.total * this.rollMult(+sa)) / (def.total * this.rollMult(+sd));
-        if (r >= 1) pWin += pa * pd;
-        if (r >= 2) pBreak += pa * pd;
-      }
-    }
-    const ratio = att.total / def.total;
-    const lossRate = U.clamp(0.22 / ratio, 0.04, 0.55) * (1 - Game.mods.loss);
-    return { att, def, est, pWin, pBreak, ratio, expLoss: commit * lossRate, orgCost: this.orgCost(commit), exact: est.exact };
-  },
+  // Стойкость: как медленно падает контроль. Земля державы-игрока — ×2
+  resilienceOf(c) { return Game.isPower(c.ctrl) ? 2 : Game.resilience(c); },
 
-  orgCost(commit) {
-    const total = Math.max(1, Game.P().divs);
-    return Math.round(8 + 30 * commit / total);
-  },
-
-  /* --- Наступление текущей державы --- */
-  resolveAttack(target, commit) {
+  /* --- Итог одного дня боя при данном соотношении сил --- */
+  dayEffects(ratio, res, attDivs, defDivs) {
     const m = Game.mods;
-    const att = this.attackBreakdown(target, commit);
-    const def = this.defenseBreakdown(target);
-    const aDice = U.roll2d6(), dDice = U.roll2d6();
-    const aRoll = this.rollMult(aDice[0] + aDice[1]);
-    const dRoll = this.rollMult(dDice[0] + dDice[1]);
-    const aPow = att.total * aRoll;
-    const dPow = def.total * dRoll;
-    const ratio = aPow / dPow;
-    const outcome = this.outcomeFor(ratio);
-    const controlBefore = target.control;
-
-    const pRate = U.clamp(0.22 / ratio, 0.04, 0.55) * (1 - m.loss);
-    const playerLost = Math.min(commit, U.probRound(commit * pRate));
-    const eRate = ratio >= 1 ? U.clamp(0.15 * ratio, 0.12, 0.65) : U.clamp(0.08 * ratio, 0.02, 0.1);
-    const enemyLost = Math.round(def.divs * eRate * 10) / 10;
-
-    // Продвижение фронта (крупные государства держатся дольше — см. Game.resilience)
-    const resilience = def.power ? 1.5 : Game.resilience(target);
-    let controlDrop = 0;
-    if (ratio >= 1) controlDrop = Math.max(3, Math.round((12 + 22 * Math.min(ratio - 1, 2) + U.rand(0, 6)) / resilience));
-    else if (ratio >= 0.75) controlDrop = Math.round(U.randi(1, 4) / resilience);
-
-    // Трофеи: часть заводов вывозится в тыл
-    const loot = ratio >= 1 && !target.radioactive ? Math.floor(target.factories * controlDrop / 100 * 0.35) : 0;
-
     return {
-      kind: 'attack', by: Game.cur, defender: def.power || null,
-      op: 'Операция «' + U.pick(OP_NAMES) + '»',
-      date: Game.S.date,
-      targetId: target.id, targetName: target.name,
-      targetFaction: target.faction, targetColor: def.power ? POWERS[def.power].color : null,
-      att: { divs: commit, lines: att.lines, base: att.base, mult: att.mult, dice: aDice, roll: aRoll, power: aPow },
-      def: { divs: def.divs, lines: def.lines, base: def.base, mult: def.mult, dice: dDice, roll: dRoll, power: dPow },
-      ratio, outcome,
-      playerLost, playerMPLost: playerLost * CFG.DIV.mp + Math.round(commit * pRate * 4),
-      enemyLost, controlBefore, controlDrop, resilience, loot,
-      orgCost: this.orgCost(commit)
+      ctrlDrop: ratio >= 1 ? (2 + 4 * Math.min(ratio - 1, 2)) / res : ratio >= 0.85 ? 0.3 / res : 0,
+      attLoss: attDivs * U.clamp(0.012 / ratio, 0.002, 0.03) * (1 - m.loss),
+      defLoss: defDivs * (ratio >= 1 ? U.clamp(0.012 * ratio, 0.006, 0.04) : U.clamp(0.006 * ratio, 0.001, 0.008)),
+      orgLoss: 2 + 2 / Math.max(ratio, 0.3)
     };
   },
 
-  /* --- Наступление ИИ на землю державы игрока --- */
+  // Сводные цифры наступающих армий
+  armyGroup(armies) {
+    const divs = armies.reduce((s, a) => s + a.divs, 0);
+    const org = divs ? armies.reduce((s, a) => s + a.org * a.divs, 0) / divs : 0;
+    // Если хоть одна армия идёт через пролив — штраф действует на всех
+    const from = armies.find(a => Geo.isSea(a.loc, a.order.target || '')) || armies[0];
+    return { divs, org, from: from.loc };
+  },
+
+  /* --- Один день сражения (бросаем кубики) --- */
+  battleDay(c, armies) {
+    const g = this.armyGroup(armies);
+    const att = this.attackBreakdown(c, g.divs, g.org, g.from);
+    const def = this.defenseBreakdown(c);
+    const aDice = U.roll2d6(), dDice = U.roll2d6();
+    const aRoll = this.rollMult(aDice[0] + aDice[1]), dRoll = this.rollMult(dDice[0] + dDice[1]);
+    const aPow = att.total * aRoll, dPow = Math.max(1, def.total * dRoll);
+    const ratio = aPow / dPow;
+    const res = this.resilienceOf(c);
+    const fx = this.dayEffects(ratio, res, g.divs, def.divs);
+    return Object.assign(fx, {
+      ratio, resilience: res,
+      defender: def.power || null,   // тег державы-защитника (null — ИИ-страна)
+      att: { divs: g.divs, lines: att.lines, base: att.base, mult: att.mult, dice: aDice, roll: aRoll, power: aPow },
+      def: { divs: def.divs, lines: def.lines, base: def.base, mult: def.mult, dice: dDice, roll: dRoll, power: dPow }
+    });
+  },
+
+  /* --- Прогноз наступления: перебираем все 36×36 бросков ---
+     Возвращает шанс «выиграть день», ожидаемые дни до захвата и на сколько дней хватит организации. */
+  estimateArmies(c, armies) {
+    const g = this.armyGroup(armies);
+    const att = this.attackBreakdown(c, g.divs, g.org, g.from);
+    const est = Game.estDivs(c);
+    const def = this.defenseBreakdown(c, est.mid);
+    const res = this.resilienceOf(c);
+    let pWin = 0, drop = 0, orgLoss = 0, attLoss = 0;
+    for (const [sa, pa] of Object.entries(U.DIST_2D6)) {
+      for (const [sd, pd] of Object.entries(U.DIST_2D6)) {
+        const r = (att.total * this.rollMult(+sa)) / Math.max(1, def.total * this.rollMult(+sd));
+        const p = pa * pd, fx = this.dayEffects(r, res, g.divs, def.divs);
+        if (r >= 1) pWin += p;
+        drop += p * fx.ctrlDrop;
+        orgLoss += p * fx.orgLoss;
+        attLoss += p * fx.attLoss;
+      }
+    }
+    const daysToTake = drop > 0 ? Math.ceil(c.control / drop) : Infinity;
+    const orgDays = Math.max(0, Math.floor((g.org - CFG.ARMY.haltOrg) / orgLoss));
+    return { att, def, est, pWin, drop, daysToTake, orgDays, attLossDay: attLoss, ratio: att.total / Math.max(1, def.total), exact: est.exact, divs: g.divs, org: g.org };
+  },
+
+  /* --- Наступление ИИ на землю державы игрока (мгновенный удар) --- */
   resolveEnemyOffensive(src, target) {
     const Y = target.ctrl;
     const committed = src.divs * 0.6;
@@ -186,15 +188,14 @@ const Combat = {
     const dPow = def.total * this.rollMult(dDice[0] + dDice[1]);
     const ratio = aPow / Math.max(1, dPow);
     const capital = target.id === POWERS[Y].capital;
-    const PY = Game.P(Y);
 
     let controlDrop = 0, playerLost = 0, enemyLost = 0;
     if (ratio >= 1) {
       controlDrop = Math.round((10 + 25 * Math.min(ratio - 1, 1.5)) * (capital ? 0.5 : 1));
-      playerLost = Math.min(PY.divs, U.probRound(defenders * U.clamp(0.12 * ratio, 0.03, 0.35)));
+      playerLost = defenders * U.clamp(0.12 * ratio, 0.03, 0.35);
       enemyLost = committed * U.clamp(0.1 / ratio, 0.03, 0.2);
     } else {
-      playerLost = Math.min(PY.divs, U.probRound(defenders * 0.04));
+      playerLost = defenders * 0.04;
       enemyLost = committed * U.clamp(0.2 / Math.max(ratio, 0.2), 0.08, 0.45);
     }
     return { src, target, ratio, aPow, dPow, aDice, dDice, defenders, sea, controlDrop, playerLost, enemyLost: Math.round(enemyLost * 10) / 10 };
