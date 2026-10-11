@@ -240,7 +240,7 @@ function runLoop(room) {
 }
 
 /* ---------------- Действия игроков ---------------- */
-const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'peace', 'influence', 'integrate', 'spy',
+const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'saveTemplate', 'deleteTemplate', 'peace', 'influence', 'integrate', 'spy',
   'nuke', 'startResearch', 'startFocus', 'chooseEvent', 'setPaused', 'setSpeed']);
 
 function doAction(room, p, name, args) {

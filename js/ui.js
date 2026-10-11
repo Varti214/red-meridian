@@ -16,6 +16,7 @@ const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V'];
 const UI = {
   selected: null,
   selectedArmy: null,
+  deployTpl: null,          // шаблон, по которому набираются новые дивизии
   logFilter: 'all',
   logCollapsed: false,
   unread: 0,
@@ -160,6 +161,7 @@ const UI = {
       case 'close-panel': return this.selectedArmy ? this.selectArmy(null) : this.select(null);
       case 'log-collapse': return this.toggleLog();
       case 'map-mode': return this.toggleMapMode();
+      case 'templates': return this.openTemplates();
       case 'modal-close': return this.closeModal();
     }
   },
@@ -170,7 +172,7 @@ const UI = {
     switch (act) {
       case 'select': this.select(id, true); Sound.play('click'); return;
       case 'log-goto': this.select(id, true); return;
-      case 'deploy': return run('deploy', +a.dataset.n);
+      case 'deploy': return run('deploy', +a.dataset.n, this.deployTplId());
       case 'fortify': return run('fortify', id);
       case 'justify': return run('justify', id);
       case 'declare': return this.confirmDeclare(id);
@@ -221,6 +223,7 @@ const UI = {
     else if (e.code === 'KeyR') this.openResearch('research');
     else if (e.code === 'KeyF') this.openResearch('focus');
     else if (e.code === 'KeyM') this.toggleMapMode();
+    else if (e.code === 'KeyD') this.openTemplates();
   },
 
   /* ---------------- ВРЕМЯ ---------------- */
@@ -443,7 +446,7 @@ const UI = {
   countrySig(c) {
     const P = this.P(), me = Game.me, est = Game.estDivs(c);
     const reasons = [Game.canJustify(c), Game.canDeclare(c), Game.canPeace(c), Game.canInfluence(c), Game.canIntegrate(c),
-      Game.canNuke(c), Game.canFortify(c), Game.canDeploy(1), Game.canDeploy(5),
+      Game.canNuke(c), Game.canFortify(c), Game.canDeploy(1, this.deployTplId()), Game.canDeploy(5, this.deployTplId()), this.deployTplId(),
       Game.armies().filter(a => (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id)).map(a => [a.id, Math.round(a.divs), Math.round(a.org / 5), a.order.type]),
       ...SPY_OPS.map(op => Game.canSpy(c, op))];
     return JSON.stringify([c.id, c.faction, c.ctrl, Game.atWar(c), c.cb[me] === true, !!Game.justifying(c), !!c.influence, !!c.integrate, c.radioactive,
@@ -584,11 +587,12 @@ const UI = {
 
     /* --- Действия --- */
     if (own) {
-      const dc = Game.deployCost(1), dc5 = Game.deployCost(5);
+      const tplId = this.deployTplId(), tpl = Game.tpl(tplId);
+      const dc = Game.deployCost(1, tplId), dc5 = Game.deployCost(5, tplId);
       html += `<div class="cp-sec"><div class="cp-sec-title">Мобилизация и оборона</div>`;
-      html += this.actBtn({ act: 'deploy', label: 'Сформировать дивизию', icon: 'i-div', data: 'data-n="1"', why: Game.canDeploy(1),
-        sub: `${U.fmtMP(dc.mp)} призывников · ${U.days(Game.trainDays())}`, cost: this.costTag(dc.pp) });
-      html += this.actBtn({ act: 'deploy', label: 'Сформировать 5 дивизий', icon: 'i-div', data: 'data-n="5"', why: Game.canDeploy(5),
+      html += this.actBtn({ act: 'deploy', label: 'Сформировать: ' + (tpl ? tpl.name : 'дивизия'), icon: 'i-div', data: 'data-n="1"', why: Game.canDeploy(1, tplId),
+        sub: `${U.fmtMP(dc.mp)} призывников · ${U.days(Game.trainDays(tplId))} · шаблон меняется внизу`, cost: this.costTag(dc.pp) });
+      html += this.actBtn({ act: 'deploy', label: 'Сформировать 5 дивизий', icon: 'i-div', data: 'data-n="5"', why: Game.canDeploy(5, tplId),
         sub: `${U.fmtMP(dc5.mp)} призывников`, cost: this.costTag(dc5.pp) });
       html += this.actBtn({ act: 'fortify', id: c.id, label: 'Возвести укрепрайон', icon: 'i-shield', why: Game.canFortify(c),
         sub: '+15% к обороне региона', cost: this.costTag(CFG.FORTIFY_PP) });
@@ -655,35 +659,36 @@ const UI = {
     const projects = Game.list(c => c.cb[me] || (c.influence && c.influence.by === me) || (c.integrate && c.integrate.by === me));
     const threatened = Game.lands().filter(c => c.control < 99.5);
     const sig = JSON.stringify([me, P.divs, this.selectedArmy, P.armies.map(a => [a.id, Math.round(a.divs), Math.round(a.org / 4), a.order.type, a.loc, a.order.target]),
-      P.training.map(t => t.count + ':' + t.total), Game.canDeploy(1), Game.canDeploy(5),
+      P.training.map(t => t.count + ':' + t.total + ':' + t.daysLeft), this.deployTplId(), JSON.stringify(P.templates), JSON.stringify(P.rmix),
+      Game.canDeploy(1, this.deployTplId()), Game.canDeploy(5, this.deployTplId()),
       fronts.map(c => { const e = Game.estDivs(c); return [c.id, e.lo, e.hi, Math.round(c.control), c.ctrl]; }),
       projects.map(c => [c.id, c.cb[me] === true, !!c.influence, !!c.integrate]),
       threatened.map(c => [c.id, Math.round(c.control / 5)])]);
     if (sig === this.sig.dock) return;
     this.sig.dock = sig;
 
-    const dc = Game.deployCost(1), dc5 = Game.deployCost(5);
+    const tplId = this.deployTplId();
+    const dc = Game.deployCost(1, tplId), dc5 = Game.deployCost(5, tplId);
     const newArmy = Math.min(P.divs, 10);
-    let a = `<div class="box-title"><svg><use href="#i-div"/></svg>Резерв и мобилизация</div>
+    const training = P.training.reduce((s, t) => s + t.count, 0);
+    const soonest = P.training.length ? Math.min(...P.training.map(t => t.daysLeft)) : 0;
+    let a = `<div class="box-title"><svg><use href="#i-div"/></svg>Резерв и мобилизация
+        <button class="btn btn-xs ab-tpl-btn" data-ui="templates" data-tip="Конструктор шаблонов дивизий (D)">Шаблоны</button></div>
       <div class="ab-main">
-        <div class="ab-divs"><b>${P.divs}</b><span>${U.plural(P.divs, 'дивизия', 'дивизии', 'дивизий')} в резерве</span></div>
+        <div class="ab-divs" data-tip="${U.esc(Game.mixText(P.rmix) || 'Резерв пуст')}"><b>${P.divs}</b><span>${U.plural(P.divs, 'дивизия', 'дивизии', 'дивизий')} в резерве</span></div>
         ${this.actBtn({ act: 'army-create', label: newArmy ? `Новая армия (${newArmy})` : 'Новая армия', icon: 'i-flag', data: `data-n="${newArmy || 1}"`, why: Game.canCreateArmy(newArmy || 1), cls: 'act-sm act-army',
           tip: 'Свести дивизии резерва в армию. Армия появится в столице — затем выберите её и кликните по своей земле, чтобы отправить на фронт.' })}
-      </div><div class="ab-train">`;
-    if (P.training.length) {
-      P.training.forEach((t, i) => {
-        a += `<div class="trn"><span>${U.divs(t.count)}</span><div class="meter"><i data-live="prog" data-k="train" data-id="${i}" style="width:${(1 - t.daysLeft / t.total) * 100}%"></i></div><em data-live="days" data-k="train" data-id="${i}">${U.days(t.daysLeft)}</em></div>`;
-      });
-    } else {
-      a += `<div class="trn-empty">Обучение не ведётся</div>`;
-    }
-    a += `</div><div class="ab-btns">
-      ${this.actBtn({ act: 'deploy', label: '+1 дивизия', icon: 'i-plus', data: 'data-n="1"', why: Game.canDeploy(1), cls: 'act-sm', cost: this.costTag(dc.pp),
-        tip: `${dc.pp} ПВ и ${U.fmtMP(dc.mp)} призывников. Обучение: ${U.days(Game.trainDays())}.` })}
-      ${this.actBtn({ act: 'deploy', label: '+5 дивизий', icon: 'i-plus', data: 'data-n="5"', why: Game.canDeploy(5), cls: 'act-sm', cost: this.costTag(dc5.pp),
-        tip: `${dc5.pp} ПВ и ${U.fmtMP(dc5.mp)} призывников.` })}
-    </div>`;
+      </div>
+      <div class="ab-train">${training ? `В обучении: ${U.divs(training)}, ближайшие через ${U.days(soonest)}` : 'Обучение не ведётся'}</div>
+      <div class="ab-btns">
+        <select class="tpl-select" id="tpl-select" data-tip="Шаблон для новых дивизий">${Game.templates().map(t => `<option value="${t.id}" ${t.id === tplId ? 'selected' : ''}>${U.esc(t.name)}</option>`).join('')}</select>
+        ${this.actBtn({ act: 'deploy', label: '+1', icon: 'i-plus', data: 'data-n="1"', why: Game.canDeploy(1, tplId), cls: 'act-sm act-deploy', cost: this.costTag(dc.pp),
+          tip: `${dc.pp} ПВ и ${U.fmtMP(dc.mp)} призывников. Обучение: ${U.days(Game.trainDays(tplId))}.` })}
+        ${this.actBtn({ act: 'deploy', label: '+5', icon: 'i-plus', data: 'data-n="5"', why: Game.canDeploy(5, tplId), cls: 'act-sm act-deploy', cost: this.costTag(dc5.pp),
+          tip: `${dc5.pp} ПВ и ${U.fmtMP(dc5.mp)} призывников.` })}
+      </div>`;
     this.el.army.innerHTML = a;
+    this.el.army.querySelector('#tpl-select').onchange = e => { this.deployTpl = e.target.value; this.sig.dock = null; this.renderDock(); };
 
     let f = `<div class="box-title"><svg><use href="#i-swords"/></svg>Армии и фронты<span class="box-count">${fronts.length ? fronts.length + ' ' + U.plural(fronts.length, 'фронт', 'фронта', 'фронтов') : ''}</span></div><div class="fc-list">`;
     const cards = [];
@@ -1060,6 +1065,110 @@ const UI = {
     });
   },
 
+  /* ---------------- ШАБЛОНЫ ДИВИЗИЙ ---------------- */
+  deployTplId() {
+    if (!this.deployTpl || !Game.tpl(this.deployTpl)) this.deployTpl = Game.defaultTpl();
+    return this.deployTpl;
+  },
+
+  openTemplates() {
+    if (!this.started) return;
+    const first = Game.templates()[0];
+    this.tplEdit = first ? { id: first.id, name: first.name, bats: Object.assign({}, first.bats) } : { id: null, name: 'Новая дивизия', bats: { inf: 6 } };
+    this.openModal({ key: 'templates', cls: 'm-templates', html: '<div class="tpl-root"></div>', onOpen: () => this.renderTemplates() });
+  },
+
+  statBar(label, v, max, fmt) {
+    return `<div class="tpl-stat"><span>${label}</span><div class="meter"><i style="width:${U.clamp(v / max * 100, 2, 100)}%"></i></div><b>${fmt}</b></div>`;
+  },
+
+  renderTemplates() {
+    const el = this.modalEl('templates');
+    if (!el) return;
+    const ed = this.tplEdit;
+    const st = Game.tplStats(ed);
+    const total = Object.values(ed.bats).reduce((s, n) => s + n, 0);
+    const used = ed.id && Game.tplUsed(ed.id);
+    const list = Game.templates().map(t => {
+      const ts = Game.tplStats(t);
+      return `<button class="tpl-item ${t.id === ed.id ? 'active' : ''}" data-tpl="${t.id}">
+        <b>${U.esc(t.name)}</b>
+        <span class="tpl-bats">${Object.entries(t.bats).map(([k, n]) => `<i class="bat bat-${k}">${BATTALIONS[k].short}</i>×${n}`).join(' ')}</span>
+        <em>Атака ${U.fmt(ts.att, 1)} · оборона ${U.fmt(ts.def, 1)} · ${U.fmt(ts.pp, 1)} ПВ</em>
+      </button>`;
+    }).join('');
+    const rows = Object.entries(BATTALIONS).map(([k, b]) => `<div class="bat-row">
+        <i class="bat bat-${k}">${b.short}</i>
+        <div class="bat-info"><b>${b.name}</b><span>атака ${b.att} · оборона ${b.def} · организация ${b.org}${b.armor ? ' · прорыв, усиливается танковой наукой' : ''}${b.antiArmor ? ' · гасит танки в обороне' : ''}${b.speed > 1 ? ' · быстрый марш' : ''}</span></div>
+        <button class="icon-btn bat-btn" data-bat="${k}" data-d="-1">−</button>
+        <b class="bat-n">${ed.bats[k] || 0}</b>
+        <button class="icon-btn bat-btn" data-bat="${k}" data-d="1">+</button>
+      </div>`).join('');
+    el.querySelector('.tpl-root').innerHTML = `
+      <div class="mh"><svg><use href="#i-div"/></svg><div><div class="mh-k">Генеральный штаб</div><h2>Шаблоны дивизий</h2></div></div>
+      <div class="tpl-layout">
+        <div class="tpl-list">${list}
+          <button class="btn btn-xs tpl-new" data-new ${Game.templates().length >= TEMPLATE_MAX ? 'disabled' : ''}>+ Новый шаблон</button></div>
+        <div class="tpl-editor">
+          <label class="tpl-name">Название<input id="tpl-name" maxlength="32" value="${U.esc(ed.name)}"></label>
+          <div class="tpl-count">Батальонов: <b class="${total > TEMPLATE_MAX_BATS ? 'neg' : ''}">${total} / ${TEMPLATE_MAX_BATS}</b></div>
+          <div class="bat-rows">${rows}</div>
+          <div class="tpl-stats">
+            ${this.statBar('Атака', st.att, 25, U.fmt(st.att, 1))}
+            ${this.statBar('Оборона', st.def, 16, U.fmt(st.def, 1))}
+            ${this.statBar('Организация', st.org, 60, U.fmt(st.org, 0))}
+            ${this.statBar('Скорость марша', st.speed, 1.6, st.speed > 1 ? 'быстрая' : 'обычная')}
+            <div class="tpl-cost"><span><svg><use href="#i-pp"/></svg>${U.fmt(st.pp, 1)} ПВ</span><span>${U.fmtMP(st.mp)} призывников</span><span>${U.days(Math.round(st.days * (1 - Game.mods.train)))} обучения</span></div>
+          </div>
+          ${used ? '<div class="cp-note warn">Дивизии этого шаблона уже служат. Изменение стоит 10 ПВ, их армии потеряют часть организации на переоснащение.</div>' : ''}
+          <div class="m-actions">
+            ${ed.id ? '<button class="btn" data-del>Удалить</button>' : ''}
+            <button class="btn" data-use ${ed.id ? '' : 'disabled'}>Набирать по этому шаблону</button>
+            <button class="btn btn-gold" data-save>${ed.id ? 'Сохранить изменения' : 'Создать шаблон'}</button>
+          </div>
+        </div>
+      </div>`;
+    const root = el.querySelector('.tpl-root');
+    root.querySelectorAll('[data-tpl]').forEach(b => b.onclick = () => {
+      const t = Game.tpl(b.dataset.tpl);
+      this.tplEdit = { id: t.id, name: t.name, bats: Object.assign({}, t.bats) };
+      Sound.play('click');
+      this.renderTemplates();
+    });
+    root.querySelector('[data-new]').onclick = () => { this.tplEdit = { id: null, name: 'Новая дивизия', bats: { inf: 6, art: 1 } }; this.renderTemplates(); };
+    root.querySelector('#tpl-name').oninput = e => { ed.name = e.target.value; };
+    root.querySelectorAll('.bat-btn').forEach(b => b.onclick = () => {
+      const k = b.dataset.bat, d = +b.dataset.d;
+      const cur = ed.bats[k] || 0, sum = Object.values(ed.bats).reduce((s, n) => s + n, 0);
+      if (d > 0 && sum >= TEMPLATE_MAX_BATS) { this.toast(`Не больше ${TEMPLATE_MAX_BATS} батальонов`, 'err'); return; }
+      const n = Math.max(0, cur + d);
+      if (n) ed.bats[k] = n; else delete ed.bats[k];
+      Sound.play('click');
+      this.renderTemplates();
+    });
+    root.querySelector('[data-save]').onclick = () => {
+      const str = Object.entries(ed.bats).map(([k, n]) => k + ':' + n).join(',');
+      Act.call('saveTemplate', ed.id, ed.name, str).then(res => {
+        this.result(res);
+        if (res && res.ok && res.tpl) { const t = Game.tpl(res.tpl); if (t) this.tplEdit = { id: t.id, name: t.name, bats: Object.assign({}, t.bats) }; }
+        setTimeout(() => this.renderTemplates(), 300);
+      });
+    };
+    const del = root.querySelector('[data-del]');
+    if (del) del.onclick = () => Act.call('deleteTemplate', ed.id).then(res => {
+      this.result(res);
+      if (res && res.ok) { const f = Game.templates()[0]; this.tplEdit = { id: f.id, name: f.name, bats: Object.assign({}, f.bats) }; }
+      setTimeout(() => this.renderTemplates(), 300);
+    });
+    root.querySelector('[data-use]').onclick = () => {
+      if (!ed.id) return;
+      this.deployTpl = ed.id;
+      this.sig.dock = null;
+      this.renderDock();
+      this.toast(`Новые дивизии: «${Game.tpl(ed.id).name}»`, 'ok');
+    };
+  },
+
   /* ---------------- ПАНЕЛЬ АРМИИ ---------------- */
   armyTargetsSig(a) {
     return (Geo.meta[a.loc] || { neighbors: [] }).neighbors.filter(n => Game.atWar(Game.c(n))).map(n => n + Math.round(Game.c(n).control));
@@ -1093,8 +1202,11 @@ const UI = {
         ${this.stat('Дивизии', `${U.fmt(a.divs, 1)} / ${CFG.ARMY.max}`)}
         ${this.stat('Место', U.esc(loc.name))}
         ${this.stat('Организация', Math.round(a.org) + '%', this.meter(a.org, a.org < 35 ? 'meter-orange' : 'meter-green'), 'Наступление расходует организацию; ниже ' + CFG.ARMY.haltOrg + '% армия останавливается. В обороне восстанавливается.')}
-        ${this.stat('Сила атаки', U.fmt(a.divs * CFG.DIV.attack * Game.mods.attack * (1 + Game.mods.attackBonus), 0))}
+        ${this.stat('Сила атаки', U.fmt(Game.mixStats(a.mix).att * (1 + Game.mods.attackBonus), 0), '', 'Сумма атаки батальонов всех дивизий (с учётом техники и доктрины)')}
+        ${this.stat('Оборона', U.fmt(Game.mixStats(a.mix).def, 0))}
+        ${this.stat('Скорость марша', U.days(Game.stepDays(a.loc, a.loc, a)) + ' на переход', '', 'Скорость задаёт самый медленный батальон: пехота — 3 дня, техника — 2 дня')}
       </div>
+      <div class="army-mix">${Object.entries(a.mix).filter(([, n]) => n >= 0.5).map(([id, n]) => { const t = Game.tpl(id); return `<span class="mix-chip">${U.esc(t ? t.name : '?')} <b>×${Math.round(n)}</b></span>`; }).join('')}</div>
       <div class="cp-note army-hint">Кликните по <b>своей</b> земле — армия пойдёт туда. По <b>соседней вражеской</b> — начнёт наступление. Правый клик тоже работает.</div>`;
     if (a.battle && a.order.type === 'attack') {
       const c = Game.c(a.battle.target), last = a.battle.last;
@@ -1481,6 +1593,7 @@ const UI = {
         <section><h3>Ресурсы</h3><p><b>ПВ</b> — политвласть для любых решений. <b>Заводы</b> дают очки исследований (ОИ). <b>Призывники</b> нужны для новых дивизий. <b>Напряжённость</b> общая для мира: выше 50% блоки мобилизуются, выше 75–80% сами вступают в войну.</p></section>
         <section><h3>Война</h3><p>Кликните по стране → «Обосновать войну» → дождитесь окончания → «Объявить войну». Территория станет оранжевым фронтом. «Спланировать наступление» покажет шанс победы: сила атаки против обороны плюс бросок 2d6 с каждой стороны. Через пролив атака слабее на 20%, десантом — на 45%. Сверхдержавы обладают <b>стойкостью</b>: их фронт рушится медленнее.</p></section>
         <section><h3>Армии и фронт</h3><p>Дивизии воюют в составе армий — фишек на карте. Кликните по фишке, затем по своей земле — армия пойдёт туда; по соседней вражеской — начнёт наступление. Бой идёт каждый день, пока не кончится организация. Земли без армии защищает только ополчение.</p></section>
+        <section><h3>Шаблоны дивизий</h3><p>Кнопка «Шаблоны» внизу (или <kbd>D</kbd>) открывает конструктор: соберите дивизию из батальонов — пехоты, мотопехоты, танков, артиллерии и ПТ. Танки сильны в атаке и прорыве, пехота держит оборону и организацию, ПТ гасит танки противника, моторизованные армии маршируют быстрее.</p></section>
         <section><h3>Против человека</h3><p>Армия державы-игрока защищает все её враждебные границы сразу: чем больше у соперника фронтов, тем слабее каждый участок. Мир между людьми заключается только по согласию обоих.</p></section>
         <section><h3>Разведка</h3><p>Без разведданных численность врага видна как диапазон. «Сбор разведданных» уточняет цифры, «Саботаж» снижает оборону до −60%, «Диверсия» уничтожает заводы. Провалы повышают напряжённость.</p></section>
         <section><h3>Наука и фокусы</h3><p><kbd>R</kbd> — исследования (2 отдела одновременно), <kbd>F</kbd> — национальные фокусы. Ядерная ветка до 4-го уровня открывает ядерный удар: регион навсегда превращается в пустошь без заводов.</p></section>

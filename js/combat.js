@@ -29,21 +29,28 @@ const Combat = {
 
   outcomeFor(ratio) { return this.OUTCOMES.find(o => ratio >= o.min); },
 
-  /* --- Сила атаки армий текущей державы (Game.cur) --- */
-  attackBreakdown(target, divs, org, fromLoc) {
+  /* --- Сила атаки армий текущей державы (Game.cur) ---
+     g — сводка армий (armyGroup): дивизии, очки атаки по шаблонам, доля танков */
+  attackBreakdown(target, g, fromLoc) {
     const m = Game.mods;
-    const base = divs * CFG.DIV.attack;
-    const lines = [{ label: `${U.fmt(divs, 1)} див. × ${CFG.DIV.attack}`, value: base }];
+    const divs = g.divs, org = g.org;
+    const base = g.att;
+    const lines = [{ label: `${U.fmt(divs, 1)} див. по шаблонам (с техникой)`, value: base }];
     let mult = 1;
     const add = (label, k) => {
       if (Math.abs(k - 1) < 0.001) return;
       lines.push({ label, mult: k });
       mult *= k;
     };
-    add('Танковые технологии', m.attack);
     add('Военная доктрина', 1 + m.attackBonus);
     add(`Организация ${Math.round(org)}%`, 0.4 + 0.6 * org / 100);
     if (fromLoc) add('Форсирование пролива', Game.armySupply(fromLoc, target.id));
+    // ПТ-артиллерия противника (только у держав-игроков) гасит танковый удар
+    const Y = Game.powerOf(target);
+    if (Y && Y !== Game.cur && g.armor > 0) {
+      const at = Game.landDefense(target, Y).at;
+      add('ПТ-оборона противника', 1 - g.armor * Math.min(1, at * 4) * 0.4);
+    }
     return { base, mult, total: base * mult, lines, divs };
   },
 
@@ -80,15 +87,17 @@ const Combat = {
   /* --- Оборона земли державы Y: армии на этой земле + ополчение --- */
   powerDefense(target, Y, divsOverride) {
     const mY = Game.modsFor(Y);
-    const defenders = divsOverride != null ? divsOverride : Game.landDefenders(target, Y);
+    const land = Game.landDefense(target, Y);
+    const defenders = divsOverride != null ? divsOverride : land.divs;
+    const perDiv = land.divs > 0 ? land.def / land.divs : CFG.DIV.defense;   // оборона одной дивизии по шаблонам
     const org = Game.landOrg(target, Y);
     const core = target.core === Y;
     const capital = target.id === POWERS[Y].capital;
-    const divPart = defenders * CFG.DIV.defense;
+    const divPart = defenders * perDiv;
     const militia = core ? target.factories * 1.5 + 10 : target.factories * 0.8 + 6;
     const base = divPart + militia;
     const lines = [
-      { label: `${U.fmt(defenders, 1)} див. × ${CFG.DIV.defense}`, value: divPart },
+      { label: `${U.fmt(defenders, 1)} див. × ${U.fmt(perDiv, 1)}`, value: divPart },
       { label: core ? 'Ополчение родной земли' : 'Гарнизон и заводы', value: militia }
     ];
     let mult = 1;
@@ -112,36 +121,42 @@ const Combat = {
   resilienceOf(c) { return Game.isPower(c.ctrl) ? 2 : Game.resilience(c); },
 
   /* --- Итог одного дня боя при данном соотношении сил --- */
-  dayEffects(ratio, res, attDivs, defDivs) {
+  dayEffects(ratio, res, attDivs, defDivs, g) {
     const m = Game.mods;
+    // Пехота держится дольше (организация шаблона выше), танки быстрее прорывают оборону
+    const orgK = g ? (50 / Math.max(15, g.orgStat)) * (1 - 0.35 * g.armor) : 1;
     return {
       ctrlDrop: ratio >= 1 ? (2 + 4 * Math.min(ratio - 1, 2)) / res : ratio >= 0.85 ? 0.3 / res : 0,
       attLoss: attDivs * U.clamp(0.012 / ratio, 0.002, 0.03) * (1 - m.loss),
       defLoss: defDivs * (ratio >= 1 ? U.clamp(0.012 * ratio, 0.006, 0.04) : U.clamp(0.006 * ratio, 0.001, 0.008)),
-      orgLoss: 2 + 2 / Math.max(ratio, 0.3)
+      orgLoss: (2 + 2 / Math.max(ratio, 0.3)) * orgK
     };
   },
 
   // Сводные цифры наступающих армий
-  armyGroup(armies) {
+  armyGroup(armies, targetId) {
     const divs = armies.reduce((s, a) => s + a.divs, 0);
     const org = divs ? armies.reduce((s, a) => s + a.org * a.divs, 0) / divs : 0;
+    const mix = {};
+    armies.forEach(a => Game.addMix(mix, a.mix));
+    const st = Game.mixStats(mix);
     // Если хоть одна армия идёт через пролив — штраф действует на всех
-    const from = armies.find(a => Geo.isSea(a.loc, a.order.target || '')) || armies[0];
-    return { divs, org, from: from.loc };
+    const tgt = targetId || (armies[0].order && armies[0].order.target) || '';
+    const from = armies.find(a => Geo.isSea(a.loc, tgt)) || armies[0];
+    return { divs, org, from: from.loc, att: st.att, armor: st.armor, orgStat: st.org };
   },
 
   /* --- Один день сражения (бросаем кубики) --- */
   battleDay(c, armies) {
-    const g = this.armyGroup(armies);
-    const att = this.attackBreakdown(c, g.divs, g.org, g.from);
+    const g = this.armyGroup(armies, c.id);
+    const att = this.attackBreakdown(c, g, g.from);
     const def = this.defenseBreakdown(c);
     const aDice = U.roll2d6(), dDice = U.roll2d6();
     const aRoll = this.rollMult(aDice[0] + aDice[1]), dRoll = this.rollMult(dDice[0] + dDice[1]);
     const aPow = att.total * aRoll, dPow = Math.max(1, def.total * dRoll);
     const ratio = aPow / dPow;
     const res = this.resilienceOf(c);
-    const fx = this.dayEffects(ratio, res, g.divs, def.divs);
+    const fx = this.dayEffects(ratio, res, g.divs, def.divs, g);
     return Object.assign(fx, {
       ratio, resilience: res,
       defender: def.power || null,   // тег державы-защитника (null — ИИ-страна)
@@ -153,8 +168,8 @@ const Combat = {
   /* --- Прогноз наступления: перебираем все 36×36 бросков ---
      Возвращает шанс «выиграть день», ожидаемые дни до захвата и на сколько дней хватит организации. */
   estimateArmies(c, armies) {
-    const g = this.armyGroup(armies);
-    const att = this.attackBreakdown(c, g.divs, g.org, g.from);
+    const g = this.armyGroup(armies, c.id);
+    const att = this.attackBreakdown(c, g, g.from);
     const est = Game.estDivs(c);
     const def = this.defenseBreakdown(c, est.mid);
     const res = this.resilienceOf(c);
@@ -162,7 +177,7 @@ const Combat = {
     for (const [sa, pa] of Object.entries(U.DIST_2D6)) {
       for (const [sd, pd] of Object.entries(U.DIST_2D6)) {
         const r = (att.total * this.rollMult(+sa)) / Math.max(1, def.total * this.rollMult(+sd));
-        const p = pa * pd, fx = this.dayEffects(r, res, g.divs, def.divs);
+        const p = pa * pd, fx = this.dayEffects(r, res, g.divs, def.divs, g);
         if (r >= 1) pWin += p;
         drop += p * fx.ctrlDrop;
         orgLoss += p * fx.orgLoss;

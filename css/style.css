@@ -1454,3 +1454,63 @@ body.army-mode #map-root { cursor: crosshair; }
 .fnode-path { border-color: rgba(227, 180, 72, 0.6); background: linear-gradient(180deg, rgba(227, 180, 72, 0.12), rgba(14, 20, 29, 0.97)); }
 .ft-excl { position: absolute; left: 0; right: 0; top: calc(2 * 124px - 20px); width: auto; text-align: center; }
 .ft-excl span { display: inline; font-size: 13px; margin-right: 6px; }
+
+/* ============================================================
+   ШАБЛОНЫ ДИВИЗИЙ
+   ============================================================ */
+.m-templates { width: min(980px, 100%); }
+.tpl-layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
+.tpl-list { display: flex; flex-direction: column; gap: 6px; max-height: 62vh; overflow-y: auto; padding-right: 4px; }
+.tpl-item {
+  display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; text-align: left;
+  background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line-2); border-radius: 3px; cursor: pointer;
+}
+.tpl-item b { font: 600 13.5px var(--font-c); }
+.tpl-item em { font-style: normal; font-size: 11px; color: var(--muted); }
+.tpl-item:hover { background: rgba(255, 255, 255, 0.06); }
+.tpl-item.active { border-color: var(--gold); background: rgba(227, 180, 72, 0.1); box-shadow: inset 0 0 0 1px var(--gold); }
+.tpl-bats { font-size: 11px; color: #c9d2dc; }
+.tpl-new { align-self: flex-start; margin-top: 4px; }
+.tpl-editor { display: flex; flex-direction: column; gap: 10px; }
+.tpl-name { display: flex; flex-direction: column; gap: 5px; font: 600 10.5px var(--font-c); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.tpl-name input { height: 34px; padding: 0 10px; background: rgba(0, 0, 0, 0.35); border: 1px solid var(--line-2); border-radius: 3px; color: var(--text); font: 600 14px var(--font-c); outline: none; }
+.tpl-name input:focus { border-color: var(--gold); }
+.tpl-count { font: 600 12px var(--font-c); color: var(--muted); }
+.tpl-count b { color: var(--text); }
+.bat-rows { display: flex; flex-direction: column; gap: 5px; }
+.bat-row { display: flex; align-items: center; gap: 10px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 3px; background: rgba(255, 255, 255, 0.025); }
+.bat-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.bat-info b { font: 600 13px var(--font-c); }
+.bat-info span { font-size: 11px; color: var(--muted); }
+.bat-btn { width: 28px; height: 28px; border: 1px solid var(--line-2); font: 700 16px var(--font-c); color: var(--text); }
+.bat-btn:hover { border-color: var(--gold); }
+.bat-n { min-width: 20px; text-align: center; font: 700 15px var(--font-c); }
+.bat { display: inline-block; min-width: 32px; padding: 2px 4px; border: 1px solid; border-radius: 2px; font: 700 9.5px var(--font-c); letter-spacing: 0.06em; text-align: center; font-style: normal; }
+.bat-inf { color: #9fd18b; border-color: rgba(159, 209, 139, 0.5); }
+.bat-mot { color: #7fd3e6; border-color: rgba(127, 211, 230, 0.5); }
+.bat-tank { color: #ffb36b; border-color: rgba(255, 179, 107, 0.6); }
+.bat-art { color: #ff8a80; border-color: rgba(255, 138, 128, 0.5); }
+.bat-at { color: #c9a8ff; border-color: rgba(201, 168, 255, 0.5); }
+.tpl-stats { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 3px; background: rgba(0, 0, 0, 0.2); }
+.tpl-stat { display: grid; grid-template-columns: 110px 1fr 70px; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.tpl-stat b { color: var(--text); font: 600 13px var(--font-c); text-align: right; }
+.tpl-stat .meter i { background: linear-gradient(90deg, #a87d22, var(--gold-2)); }
+.tpl-cost { display: flex; gap: 16px; margin-top: 4px; font: 600 12.5px var(--font-c); color: var(--gold-2); flex-wrap: wrap; }
+.tpl-cost span { display: flex; align-items: center; gap: 4px; }
+.tpl-cost svg { width: 12px; height: 12px; }
+
+/* Нижняя панель: выбор шаблона для набора */
+.ab-tpl-btn { margin-left: auto; height: 22px; font-size: 10.5px; }
+#army-box .box-title { margin-bottom: 4px; }
+#army-box .ab-train { flex: none; margin: 4px 0; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tpl-select {
+  flex: 1.4; min-width: 0; height: 32px; padding: 0 6px;
+  background: rgba(0, 0, 0, 0.35); border: 1px solid var(--line-2); border-radius: 3px;
+  color: var(--text); font: 600 12px var(--font-c); outline: none; cursor: pointer;
+}
+.tpl-select option { background: #0d141d; }
+.act-deploy { flex: 0.8; }
+.army-mix { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.mix-chip { padding: 3px 8px; border: 1px solid var(--line-2); border-radius: 12px; font-size: 11.5px; color: #c9d2dc; background: rgba(255, 255, 255, 0.04); }
+.mix-chip b { color: var(--text); }
+@media (max-width: 900px) { .tpl-layout { grid-template-columns: 1fr; } }

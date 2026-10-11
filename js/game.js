@@ -120,16 +120,21 @@ const Game = {
       tag, player: playerName || '', out: false,
       pp: CFG.START.pp, mp: d.mp, divs: Math.round(divs), rp: CFG.START.rp,
       armies: [], armySeq: 0,
+      templates: START_TEMPLATES.map((t, i) => ({ id: 'T' + (i + 1), name: t.names[tag], bats: Object.assign({}, t.bats) })),
+      tplSeq: START_TEMPLATES.length, rmix: {},
       warheads: 0, warheadTimer: 0, factoryTimer: 0,
       training: [], research: [], techs: [], focus: null, focuses: [],
       stats: { won: 0, lost: 0, annexed: 0, nukes: 0, spyOk: 0, spyFail: 0, divLost: 0, enemyKilled: 0 }
     };
-    // Стартовые армии стоят на границах; что не вошло в армии — резерв в столице
+    // Резерв — стрелковые дивизии; стартовые армии стоят на границах (часть дивизий — танковые)
+    P.rmix = { T1: P.divs };
     for (const a of d.armies || []) {
       const n = Math.min(a.divs, P.divs);
       if (n < 1) break;
-      P.divs -= n;
-      this.newArmy(tag, a.name, n, this.S.countries[a.loc] && this.S.countries[a.loc].ctrl === tag ? a.loc : d.capital);
+      this.takeReserve(n, tag);
+      const tanks = Math.min(a.tanks || 0, n);
+      const mix = tanks ? { T1: n - tanks, T2: tanks } : { T1: n };
+      this.newArmy(tag, a.name, n, this.S.countries[a.loc] && this.S.countries[a.loc].ctrl === tag ? a.loc : d.capital, mix);
     }
     this.S.nextRandomEvent[tag] = 45;
   },
@@ -267,7 +272,7 @@ const Game = {
   addPP(n) { const P = this.P(); P.pp = Math.max(0, P.pp + n); },
   addRP(n) { const P = this.P(); P.rp = Math.max(0, P.rp + n); },
   addMP(n) { const P = this.P(); P.mp = Math.max(0, P.mp + n); },
-  addDivs(n) { const P = this.P(); P.divs = Math.max(0, P.divs + n); },
+  addDivs(n) { if (n >= 0) this.addReserve(this.defaultTpl(), Math.round(n)); else this.loseReserve(-n); },
   addTension(n) { this.S.tension = U.clamp(this.S.tension + n, 0, 100); },
   addFactories(n, announce) {
     let target = this.c(this.def().capital);
@@ -393,8 +398,8 @@ const Game = {
     if (!done.length) return;
     P.training = P.training.filter(t => t.daysLeft > 0);
     const n = done.reduce((s, t) => s + t.count, 0);
-    P.divs += n;
-    this.log('mil', 'Дивизии сформированы', `В строй вступает: ${U.divs(n)}. Всего в армии: ${P.divs}.`, this.def().capital);
+    for (const t of done) this.addReserve(t.tpl, t.count);
+    this.log('mil', 'Дивизии сформированы', `В резерв вступает: ${U.divs(n)}. В резерве: ${P.divs}.`, this.def().capital);
     Bus.emit('stateChanged');
   },
 
@@ -582,25 +587,35 @@ const Game = {
   outReason() { return this.P() && this.P().out ? 'Ваша держава капитулировала' : null; },
 
   /* --- Армия --- */
-  deployCost(n) { return { pp: CFG.DIV.pp * n, mp: CFG.DIV.mp * n }; },
-  trainDays() { return Math.max(3, Math.round(CFG.DIV.days * (1 - this.mods.train))); },
-  canDeploy(n) {
-    const P = this.P(), c = this.deployCost(n);
+  // Цена и время обучения зависят от шаблона дивизии
+  deployCost(n, tplId) {
+    const t = this.tpl(tplId) || this.tpl(this.defaultTpl());
+    const st = t ? this.tplStats(t) : { pp: CFG.DIV.pp, mp: CFG.DIV.mp };
+    return { pp: Math.round(st.pp * n), mp: Math.round(st.mp * n) };
+  },
+  trainDays(tplId) {
+    const t = this.tpl(tplId) || this.tpl(this.defaultTpl());
+    const days = t ? this.tplStats(t).days : CFG.DIV.days;
+    return Math.max(3, Math.round(days * (1 - this.mods.train)));
+  },
+  canDeploy(n, tplId) {
+    const P = this.P(), c = this.deployCost(n, tplId);
     if (this.outReason()) return this.outReason();
     if (P.pp < c.pp) return `Нужно ${c.pp} ПВ`;
     if (P.mp < c.mp) return `Нужно ${U.fmtMP(c.mp)} призывников`;
     return null;
   },
-  deploy(n) {
+  deploy(n, tplId) {
     n = Math.max(1, Math.min(5, Math.round(n)));
-    const why = this.canDeploy(n);
+    if (!this.tpl(tplId)) tplId = this.defaultTpl();
+    const why = this.canDeploy(n, tplId);
     if (why) return this.fail(why);
-    const P = this.P(), cost = this.deployCost(n), days = this.trainDays();
+    const P = this.P(), cost = this.deployCost(n, tplId), days = this.trainDays(tplId);
     P.pp -= cost.pp;
     P.mp -= cost.mp;
-    P.training.push({ count: n, daysLeft: days, total: days });
+    P.training.push({ count: n, tpl: tplId, daysLeft: days, total: days });
     this.addTension(0.05 * n);
-    this.log('mil', 'Мобилизация', `Начато формирование: ${U.divs(n)}. Срок обучения — ${U.days(days)}.`, this.def().capital);
+    this.log('mil', 'Мобилизация', `Начато формирование: ${U.divs(n)} («${this.tpl(tplId).name}»). Срок обучения — ${U.days(days)}.`, this.def().capital);
     Bus.emit('stateChanged');
     return { ok: true };
   },
@@ -720,6 +735,171 @@ const Game = {
   },
 
   /* ============================================================
+     ШАБЛОНЫ ДИВИЗИЙ (как в HOI4)
+     У державы есть шаблоны: { id, name, bats: { inf: 7, art: 2 } }.
+     Состав армии и резерва — «смесь» шаблонов: { T1: 6, T2: 4 } (сколько дивизий какого шаблона).
+     a.divs и P.divs — просто общее число дивизий, всегда равное сумме смеси.
+     ============================================================ */
+  templates(tag = this.cur) { const P = this.P(tag); return P ? P.templates : []; },
+  tpl(id, tag = this.cur) { return this.templates(tag).find(t => t.id === id) || null; },
+  defaultTpl(tag = this.cur) { const T = this.templates(tag); return T.length ? T[0].id : null; },
+
+  // Характеристики одной дивизии по шаблону (с учётом танковых технологий державы)
+  tplStats(t, tag = this.cur) {
+    const m = this.modsFor(tag);
+    const s = { att: 0, def: 0, org: 0, speed: 9, pp: 1, mp: 0, days: 6, bats: 0, armor: 0, at: 0 };
+    for (const [type, n] of Object.entries(t.bats || {})) {
+      const b = BATTALIONS[type];
+      if (!b || !n) continue;
+      // Танковые технологии в полную силу усиливают танки и на треть — остальных
+      const techK = b.armor ? m.attack : 1 + (m.attack - 1) * 0.3;
+      s.att += b.att * n * techK;
+      s.def += b.def * n;
+      s.org += b.org * n;
+      s.speed = Math.min(s.speed, b.speed);
+      s.pp += b.pp * n;
+      s.mp += b.mp * n;
+      s.days += b.days * n;
+      s.bats += n;
+      if (b.armor) s.armor += n;
+      if (b.antiArmor) s.at += n;
+    }
+    if (!s.bats) s.speed = 1;
+    s.org = s.bats ? s.org / s.bats : 50;
+    s.armor = s.bats ? s.armor / s.bats : 0;
+    s.at = s.bats ? s.at / s.bats : 0;
+    s.pp = Math.round(s.pp * 10) / 10;
+    s.mp = Math.round(s.mp * 10) / 10;
+    return s;
+  },
+
+  // Суммарные характеристики смеси дивизий
+  mixStats(mix, tag = this.cur) {
+    const r = { divs: 0, att: 0, def: 0, org: 0, speed: 9, armor: 0, at: 0 };
+    for (const [id, n] of Object.entries(mix || {})) {
+      if (n <= 0) continue;
+      const t = this.tpl(id, tag);
+      const s = t ? this.tplStats(t, tag) : { att: 10, def: 10, org: 50, speed: 1, armor: 0, at: 0 };
+      r.divs += n;
+      r.att += s.att * n;
+      r.def += s.def * n;
+      r.org += s.org * n;
+      r.armor += s.armor * n;
+      r.at += s.at * n;
+      r.speed = Math.min(r.speed, s.speed);
+    }
+    if (r.divs > 0) { r.org /= r.divs; r.armor /= r.divs; r.at /= r.divs; } else { r.org = 50; r.speed = 1; }
+    return r;
+  },
+
+  // Привести смесь к новому общему числу дивизий (потери делятся пропорционально)
+  scaleMix(holder, total) {
+    const cur = Object.values(holder.mix).reduce((s, n) => s + n, 0);
+    if (cur <= 0) { holder.mix = {}; holder.divs = 0; return; }
+    const k = Math.max(0, total) / cur;
+    for (const id of Object.keys(holder.mix)) {
+      holder.mix[id] *= k;
+      if (holder.mix[id] < 0.01) delete holder.mix[id];
+    }
+    holder.divs = Math.max(0, total);
+  },
+  addMix(mix, add) { for (const [id, n] of Object.entries(add)) mix[id] = (mix[id] || 0) + n; },
+
+  // Резерв: целые дивизии по шаблонам (P.rmix), P.divs — их сумма
+  addReserve(tplId, n, tag = this.cur) {
+    const P = this.P(tag);
+    if (!tplId || !this.tpl(tplId, tag)) tplId = this.defaultTpl(tag);
+    P.rmix[tplId] = (P.rmix[tplId] || 0) + n;
+    P.divs = Object.values(P.rmix).reduce((s, x) => s + x, 0);
+  },
+  // Взять n дивизий из резерва (сначала тех шаблонов, которых больше). Возвращает смесь.
+  takeReserve(n, tag = this.cur) {
+    const P = this.P(tag), out = {};
+    n = Math.min(Math.round(n), P.divs);
+    while (n > 0) {
+      const id = Object.keys(P.rmix).filter(k => P.rmix[k] > 0).sort((a, b) => P.rmix[b] - P.rmix[a])[0];
+      if (!id) break;
+      const take = Math.max(1, Math.min(P.rmix[id], Math.ceil(n * P.rmix[id] / P.divs)));
+      P.rmix[id] -= take;
+      if (P.rmix[id] <= 0) delete P.rmix[id];
+      out[id] = (out[id] || 0) + take;
+      n -= take;
+      P.divs = Object.values(P.rmix).reduce((s, x) => s + x, 0);
+    }
+    return out;
+  },
+  // Потери в резерве (только в столице при обороне)
+  loseReserve(n, tag = this.cur) {
+    const P = this.P(tag);
+    const holder = { mix: Object.assign({}, P.rmix), divs: P.divs };
+    this.scaleMix(holder, P.divs - n);
+    P.rmix = {};
+    for (const [id, x] of Object.entries(holder.mix)) { const r = Math.round(x); if (r > 0) P.rmix[id] = r; }
+    P.divs = Object.values(P.rmix).reduce((s, x) => s + x, 0);
+  },
+  mixText(mix, tag = this.cur) {
+    return Object.entries(mix || {}).filter(([, n]) => n >= 0.5)
+      .map(([id, n]) => { const t = this.tpl(id, tag); return (t ? t.name : '?') + ' ×' + Math.round(n); }).join(', ');
+  },
+
+  parseBats(str) {
+    const bats = {};
+    for (const part of String(str || '').split(',')) {
+      const [type, n] = part.split(':');
+      const k = Math.round(+n);
+      if (BATTALIONS[type] && k > 0) bats[type] = Math.min(k, TEMPLATE_MAX_BATS);
+    }
+    return bats;
+  },
+  tplUsed(id, tag = this.cur) {
+    const P = this.P(tag);
+    return (P.rmix[id] || 0) > 0 || P.armies.some(a => (a.mix[id] || 0) > 0.01) || P.training.some(t => t.tpl === id);
+  },
+
+  /* --- Действия с шаблонами --- */
+  // batsStr — строка «inf:7,art:2» (так её проще передать по сети)
+  saveTemplate(id, name, batsStr) {
+    const P = this.P();
+    if (this.outReason()) return this.fail(this.outReason());
+    const bats = this.parseBats(batsStr);
+    const total = Object.values(bats).reduce((s, n) => s + n, 0);
+    if (!total) return this.fail('Добавьте хотя бы один батальон');
+    if (total > TEMPLATE_MAX_BATS) return this.fail(`Не больше ${TEMPLATE_MAX_BATS} батальонов в дивизии`);
+    name = String(name || '').trim().slice(0, 32) || 'Новая дивизия';
+    const t = id && this.tpl(id);
+    if (t) {
+      // Переоснащение уже существующих дивизий стоит политвласти и сбивает организацию
+      const used = this.tplUsed(t.id);
+      if (used && P.pp < 10) return this.fail('Переоснащение стоит 10 ПВ');
+      if (used) {
+        P.pp -= 10;
+        P.armies.forEach(a => { if ((a.mix[t.id] || 0) > 0.01) a.org = Math.min(a.org, 50); });
+      }
+      t.name = name;
+      t.bats = bats;
+      this.log('mil', 'Шаблон изменён', `«${name}»${used ? ': дивизии переоснащаются, организация армий снижена' : ''}.`);
+      Bus.emit('stateChanged');
+      return { ok: true, msg: `Шаблон «${name}» сохранён`, tpl: t.id };
+    }
+    if (P.templates.length >= TEMPLATE_MAX) return this.fail(`Не больше ${TEMPLATE_MAX} шаблонов`);
+    P.tplSeq = (P.tplSeq || P.templates.length) + 1;
+    const nt = { id: 'T' + P.tplSeq, name, bats };
+    P.templates.push(nt);
+    this.log('mil', 'Новый шаблон дивизии', `«${name}».`);
+    Bus.emit('stateChanged');
+    return { ok: true, msg: `Шаблон «${name}» создан`, tpl: nt.id };
+  },
+  deleteTemplate(id) {
+    const P = this.P(), t = this.tpl(id);
+    if (!t) return this.fail('Шаблон не найден');
+    if (P.templates.length <= 1) return this.fail('Нужен хотя бы один шаблон');
+    if (this.tplUsed(id)) return this.fail('Шаблон используется: есть дивизии этого типа');
+    P.templates = P.templates.filter(x => x !== t);
+    Bus.emit('stateChanged');
+    return { ok: true, msg: `Шаблон «${t.name}» удалён` };
+  },
+
+  /* ============================================================
      АРМИИ И ФРОНТ (как в HOI4)
      Дивизии державы живут в армиях. У армии есть место (территория) и приказ:
        hold   — оборонять своё место (организация восстанавливается);
@@ -744,6 +924,14 @@ const Game = {
     if (c.id === POWERS[Y].capital) s += this.P(Y).divs;
     return s;
   },
+  // Оборона земли державы Y в «очках»: сумма обороны дивизий (по шаблонам) и доля ПТ-батальонов
+  landDefense(c, Y = c.ctrl) {
+    const mix = {};
+    for (const a of this.armiesAt(c.id, Y)) this.addMix(mix, a.mix);
+    if (c.id === POWERS[Y].capital) this.addMix(mix, this.P(Y).rmix);
+    const st = this.mixStats(mix, Y);
+    return { divs: st.divs, def: st.def, at: st.at };
+  },
   landOrg(c, Y = c.ctrl) {
     const A = this.armiesAt(c.id, Y), d = A.reduce((s, a) => s + a.divs, 0);
     return d ? A.reduce((s, a) => s + a.org * a.divs, 0) / d : 100;
@@ -756,8 +944,8 @@ const Game = {
     const total = A.reduce((s, a) => s + a.divs, 0) + cap;
     if (total <= 0) return 0;
     n = Math.min(n, total);
-    for (const a of A) a.divs = Math.max(0, a.divs - n * a.divs / total);
-    if (cap) this.P(Y).divs = Math.max(0, Math.round(this.P(Y).divs - n * cap / total));
+    for (const a of A) this.scaleMix(a, a.divs - n * a.divs / total);
+    if (cap) this.loseReserve(n * cap / total, Y);
     this.P(Y).stats.divLost += n;
     this.cleanArmies(Y);
     return n;
@@ -770,19 +958,23 @@ const Game = {
     dead.forEach(a => this.log('alert', 'Армия уничтожена', `${a.name} (командующий ${a.general}) перестала существовать.`, a.loc, tag));
   },
   armyName(tag, n) { return { SOV: `${n}-я армия`, WST: `${n}-я армия США`, AXS: `${n}-я армия Рейха` }[tag] || `${n}-я армия`; },
-  newArmy(tag, name, divs, loc) {
+  newArmy(tag, name, divs, loc, mix) {
     const P = this.P(tag), d = POWERS[tag];
     P.armySeq++;
     const a = {
       id: tag + P.armySeq, name: name || this.armyName(tag, P.armySeq),
       general: d.generals[(P.armySeq - 1) % d.generals.length],
-      divs, loc: loc || d.capital, org: 100, order: { type: 'hold' }, battle: null
+      divs, mix: mix || { [this.defaultTpl(tag)]: divs }, loc: loc || d.capital, org: 100, order: { type: 'hold' }, battle: null
     };
     P.armies.push(a);
     return a;
   },
   // Сколько дней идти между соседними землями (через пролив — дольше)
-  stepDays(a, b) { return Geo.isSea(a, b) ? CFG.ARMY.seaStepDays : CFG.ARMY.stepDays; },
+  stepDays(a, b, army) {
+    const base = Geo.isSea(a, b) ? CFG.ARMY.seaStepDays : CFG.ARMY.stepDays;
+    const speed = army ? this.mixStats(army.mix).speed : 1;
+    return Math.max(1, Math.round(base / speed));
+  },
   // Путь по своим землям (поиск в ширину по соседству)
   armyPath(from, to, tag = this.cur) {
     if (from === to) return [];
@@ -820,8 +1012,8 @@ const Game = {
     n = U.clamp(Math.round(n), 1, CFG.ARMY.max);
     const why = this.canCreateArmy(n);
     if (why) return this.fail(why);
-    this.P().divs -= n;
-    const a = this.newArmy(this.cur, null, n);
+    const mix = this.takeReserve(n);
+    const a = this.newArmy(this.cur, null, n, null, mix);
     this.log('mil', 'Новая армия', `${a.name} (${U.divs(n)}, командующий ${a.general}) развёрнута в столице.`, a.loc);
     Bus.emit('stateChanged');
     return { ok: true, msg: `Сформирована ${a.name}`, army: a.id };
@@ -832,7 +1024,7 @@ const Game = {
     if (this.outReason()) return this.fail(this.outReason());
     const take = Math.min(Math.round(n), P.divs, Math.floor(CFG.ARMY.max - a.divs));
     if (take < 1) return this.fail(P.divs < 1 ? 'Резерв пуст' : `В армии не больше ${CFG.ARMY.max} дивизий`);
-    P.divs -= take;
+    this.addMix(a.mix, this.takeReserve(take));
     a.divs += take;
     a.org = Math.min(a.org, 70);   // пополнение нужно влить в части
     Bus.emit('stateChanged');
@@ -842,7 +1034,7 @@ const Game = {
     const a = this.army(id), P = this.P();
     if (!a) return this.fail('Армия не найдена');
     if (a.order.type === 'attack') return this.fail('Сначала остановите наступление');
-    P.divs += Math.round(a.divs);
+    for (const [id, n] of Object.entries(a.mix)) { const r = Math.round(n); if (r > 0) this.addReserve(id, r); }
     P.armies = P.armies.filter(x => x !== a);
     this.log('mil', 'Армия расформирована', `${a.name}: дивизии возвращены в резерв.`, a.loc);
     Bus.emit('stateChanged');
@@ -869,8 +1061,8 @@ const Game = {
     if (why) return this.fail(why);
     if (a.battle) this.finishBattle(a, 'stopped');
     const path = this.armyPath(a.loc, c.id);
-    a.order = { type: 'move', path, left: this.stepDays(a.loc, path[0]), to: c.id };
-    const days = path.reduce((s, p, i) => s + this.stepDays(i ? path[i - 1] : a.loc, p), 0);
+    a.order = { type: 'move', path, left: this.stepDays(a.loc, path[0], a), to: c.id };
+    const days = path.reduce((s, p, i) => s + this.stepDays(i ? path[i - 1] : a.loc, p, a), 0);
     Bus.emit('stateChanged');
     return { ok: true, msg: `${a.name} выступает: ${c.name}, ~${U.days(days)}` };
   },
@@ -913,7 +1105,7 @@ const Game = {
           continue;
         }
         a.loc = next;
-        if (o.path.length) o.left = this.stepDays(a.loc, o.path[0]);
+        if (o.path.length) o.left = this.stepDays(a.loc, o.path[0], a);
         else {
           a.order = { type: 'hold' };
           this.log('mil', 'Армия на позициях', `${a.name} заняла оборону: ${c.name}.`, c.id);
@@ -948,7 +1140,7 @@ const Game = {
     for (const a of list) {
       const share = a.divs / total;
       const lost = r.attLoss * share;
-      a.divs = Math.max(0, a.divs - lost);
+      this.scaleMix(a, a.divs - lost);
       a.org = Math.max(0, a.org - r.orgLoss);
       const b = a.battle;
       b.days++; b.attLost += lost; b.defLost += r.defLoss * share; b.ratioSum += r.ratio; b.last = r;
@@ -1019,11 +1211,11 @@ const Game = {
       a.order = { type: 'hold' };
       if (back) {
         a.loc = back.id;
-        a.divs *= 0.8;
+        this.scaleMix(a, a.divs * 0.8);
         a.org = 0;
         this.log('alert', 'Отступление', `${a.name} отступила с потерями: ${back.name}.`, back.id, Y);
       } else {
-        a.divs = 0;
+        this.scaleMix(a, 0);
         this.log('alert', 'Котёл', `${a.name} попала в окружение и уничтожена: ${c.name}.`, c.id, Y);
       }
     }
@@ -1455,7 +1647,9 @@ const Game = {
       }
     }
     if (fx.army) {
-      const a = this.newArmy(X, fx.army.name, fx.army.divs);
+      const tanks = Math.round(fx.army.divs * 0.4);
+      const mix = this.tpl('T2') ? { [this.defaultTpl()]: fx.army.divs - tanks, T2: tanks } : null;
+      const a = this.newArmy(X, fx.army.name, fx.army.divs, null, mix);
       this.log('mil', 'Новая армия', a.name + ' (' + U.divs(fx.army.divs) + ', командующий ' + a.general + ') развёрнута в столице.', a.loc);
     }
     Bus.emit('mapDirty');
@@ -1530,6 +1724,12 @@ const Game = {
     }
     for (const id of Object.keys(S.countries)) if (!Geo.meta[id]) delete S.countries[id];
     if (!this.server) S.paused = true;
+    for (const [tag, P] of Object.entries(S.powers)) {
+      if (!P.templates) P.templates = START_TEMPLATES.map((t, i) => ({ id: 'T' + (i + 1), name: t.names[tag], bats: Object.assign({}, t.bats) }));
+      if (!P.rmix) P.rmix = { T1: P.divs || 0 };
+      if (!P.armies) { P.armies = []; P.armySeq = 0; }
+      P.armies.forEach(a => { if (!a.mix) a.mix = { T1: a.divs }; });
+    }
     this.S = S;
     if (S.me && S.powers[S.me]) { this.me = S.me; this.cur = S.me; }
     this.diff = DIFFICULTY[S.difficulty] || DIFFICULTY.normal;
