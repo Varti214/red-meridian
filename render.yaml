@@ -1,0 +1,9 @@
+# Настройки для бесплатного хостинга Render (render.com): Blueprint создаст сервис сам
+services:
+  - type: web
+    name: red-meridian
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz

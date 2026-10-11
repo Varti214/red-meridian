@@ -1,0 +1,15 @@
+{
+  "name": "red-meridian",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Красный меридиан — браузерная гранд-стратегия с сетевой игрой",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

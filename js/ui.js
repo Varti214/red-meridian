@@ -1,0 +1,1600 @@
+'use strict';
+/* ============================================================
+   ИНТЕРФЕЙС: верхняя панель, панель страны, журнал, нижний док,
+   модальные окна, лобби сетевой игры, подсказки, уведомления.
+   UI только показывает состояние Game.S глазами своей державы (Game.me)
+   и вызывает действия через Act (локально или через сервер).
+   ============================================================ */
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+const LOG_BADGES = { info: 'Сводка', mil: 'Фронт', intel: 'Разведка', dip: 'Дипломатия', sci: 'Наука', alert: 'Тревога', success: 'Успех', nuke: 'Ядерное' };
+const LOG_GROUPS = { mil: ['mil', 'success'], intel: ['intel'], dip: ['dip'], sci: ['sci'], alert: ['alert', 'nuke'] };
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V'];
+
+const UI = {
+  selected: null,
+  logFilter: 'all',
+  logCollapsed: false,
+  unread: 0,
+  modals: [],
+  eventQueue: [],
+  pauseDepth: 0,
+  resumeAfter: false,
+  fxBusyUntil: 0,
+  sig: {},
+  mouse: { x: 0, y: 0 },
+  tipTarget: null,
+  mapHoverId: null,
+  researchTab: 'research',
+  started: false,
+
+  me() { return Game.me; },
+  P() { return Game.P(Game.me); },
+  D() { return POWERS[Game.me]; },
+
+  /* ---------------- ИНИЦИАЛИЗАЦИЯ ---------------- */
+  init() {
+    this.el = {
+      topbar: $('#topbar'), panel: $('#country-panel'), logList: $('#log-list'), logPanel: $('#log-panel'),
+      logReopen: $('#log-reopen'), logUnread: $('#log-unread'), army: $('#army-box'), fronts: $('#fronts-box'),
+      tip: $('#tooltip'), toasts: $('#toasts'), modalRoot: $('#modal-root'), flash: $('#flash'),
+      date: $('#tb-date'), pause: $('#btn-pause'), pips: $$('#spd-pips i'), dayProg: $('#day-progress'),
+      mapMode: $('#btn-map-mode'), net: $('#net-status')
+    };
+
+    document.addEventListener('click', e => this.onClick(e));
+    document.addEventListener('keydown', e => this.onKey(e));
+    this.initTooltips();
+
+    $('#log-filters').addEventListener('click', e => {
+      const b = e.target.closest('[data-filter]');
+      if (!b) return;
+      this.logFilter = b.dataset.filter;
+      $$('#log-filters .chip').forEach(x => x.classList.toggle('active', x === b));
+      this.applyLogFilter();
+    });
+
+    const tipk = (id, key) => { const n = document.getElementById(id); if (n) n.dataset.tipk = key; };
+    tipk('res-pp', 'pp'); tipk('res-fac', 'fac'); tipk('res-mp', 'mp'); tipk('res-div', 'div');
+    tipk('res-rp', 'rp'); tipk('res-nuke', 'nuke'); tipk('res-tension', 'tension'); tipk('tb-nation', 'leader');
+    tipk('net-status', 'net');
+
+    // Игра шлёт события и посреди хода ИИ (когда активной державы нет) — поэтому
+    // каждый обработчик интерфейса выполняется «от лица» своей державы
+    const on = (evt, fn) => Bus.on(evt, (...args) => Game.S ? Game.as(Game.me, () => fn(...args)) : fn(...args));
+    on('log', e => { if (!e.to || e.to === Game.me) this.addLogEntry(e, true); });
+    on('toast', (msg, type) => this.toast(msg, type));
+    // Откладываем на следующий такт JS: если одновременно запускается анимация (ядерный удар),
+    // она успеет «занять» экран, и событие покажется уже после неё
+    on('event', ev => {
+      if (ev.power !== Game.me) return;
+      // После переподключения сервер присылает неотвеченные события заново — не дублируем
+      if (this.eventQueue.some(e => e.iid === ev.iid) || this.modals.some(m => m.iid === ev.iid)) return;
+      this.eventQueue.push(ev);
+      setTimeout(() => this.nextEvent(), 0);
+    });
+    on('eventClosed', ev => this.dropEvent(ev.iid));
+    on('battle', r => { if (r.by === Game.me) this.onBattle(r); });
+    on('nuke', r => this.onNuke(r));
+    on('enemyNuke', r => this.onEnemyNuke(r));
+    on('enemyAttack', r => this.onEnemyAttack(r));
+    on('war', () => Sound.play('alert'));
+    on('mapDirty', () => MapView.refresh());
+    on('mapDirtyDelayed', () => { MapView.hold(1900); MapView.refresh(); });
+    on('stateChanged', () => this.renderAll());
+    on('tick', () => this.onTick());
+    on('techDone', t => { if (t.power === Game.me) { this.toast(`Исследовано: «${t.name}»`, 'ok'); Sound.play('ok'); } });
+    on('focusDone', f => { if (f.power === Game.me) { this.toast(`Фокус выполнен: «${f.name}»`, 'ok'); Sound.play('ok'); } });
+    on('powerOut', p => { if (p.power !== Game.me) this.toast(`${POWERS[p.power].name} капитулирует!`, 'warn'); });
+    on('gameover', o => setTimeout(() => this.showGameOver(o), Math.max(300, this.fxBusyUntil - performance.now())));
+    on('newGame', () => this.onGameStart());
+    on('loaded', () => this.onGameStart());
+    on('lobby', room => this.renderLobby(room));
+    on('netStart', () => { this.closeIntro(); this.toast('Сетевая игра началась. Пауза снимается кнопкой ▶ — у всех сразу.', 'info'); });
+    on('netStatus', st => this.setNetStatus(st));
+  },
+
+  onGameStart() {
+    this.sig = {};
+    this.unread = 0;
+    this.eventQueue = [];
+    this.select(null);
+    this.applyNation();
+    this.rebuildLog();
+    $$('.hidden-ui').forEach(el => el.classList.remove('hidden-ui'));
+    this.renderAll();
+    this.updateTopbar();
+    this.updateClock();
+    this.setNetStatus(Net.mp ? 'ok' : 'off');
+    MapView.refresh(true);
+    if (this.started) MapView.focus(this.D().capital);
+  },
+
+  // Шапка: герб, лидер и название своей державы
+  applyNation() {
+    const d = this.D();
+    $('#tb-nation .emblem use').setAttribute('href', '#' + d.emblem);
+    $('#tb-nation .leader-portrait').textContent = d.initials;
+    $('#tb-nation .tb-nation-name').textContent = d.name;
+    $('#tb-nation .tb-leader').textContent = d.title.split(' ')[0] + ' ' + d.leader.split(' ').pop();
+    document.body.dataset.power = Game.me;
+  },
+
+  setNetStatus(st) {
+    const el = this.el.net;
+    if (!el) return;
+    el.classList.toggle('hidden', !Net.mp);
+    el.classList.toggle('lost', st === 'lost');
+    el.querySelector('span').textContent = st === 'lost' ? 'Нет связи…' : (Net.room ? Net.room.code : 'Сеть');
+    if (st === 'lost') this.toast('Связь с сервером потеряна. Переподключаемся…', 'warn');
+    if (st === 'ok' && Net.mp && this.lostOnce) this.toast('Связь восстановлена', 'ok');
+    this.lostOnce = st === 'lost' || this.lostOnce;
+  },
+
+  /* ---------------- ОБРАБОТКА КЛИКОВ ---------------- */
+  onClick(e) {
+    const a = e.target.closest('[data-act],[data-ui]');
+    if (!a) return;
+    if (a.getAttribute('aria-disabled') === 'true') {
+      const why = a.dataset.why;
+      if (why) this.toast(why, 'err');
+      Sound.play('error');
+      return;
+    }
+    if (a.dataset.ui) return this.doUI(a.dataset.ui, a);
+    this.doAct(a);
+  },
+
+  doUI(cmd) {
+    Sound.play('click');
+    switch (cmd) {
+      case 'research': return this.openResearch('research');
+      case 'focus': return this.openResearch('focus');
+      case 'toggle-pause': return this.togglePause();
+      case 'speed-up': return this.setSpeed(Game.S.speed + 1);
+      case 'speed-down': return this.setSpeed(Game.S.speed - 1);
+      case 'menu': return this.openMenu();
+      case 'close-panel': return this.select(null);
+      case 'log-collapse': return this.toggleLog();
+      case 'map-mode': return this.toggleMapMode();
+      case 'modal-close': return this.closeModal();
+    }
+  },
+
+  doAct(a) {
+    const act = a.dataset.act, id = a.dataset.id;
+    const run = (name, ...args) => Act.call(name, ...args).then(res => this.result(res));
+    switch (act) {
+      case 'select': this.select(id, true); Sound.play('click'); return;
+      case 'log-goto': this.select(id, true); return;
+      case 'deploy': return run('deploy', +a.dataset.n);
+      case 'fortify': return run('fortify', id);
+      case 'justify': return run('justify', id);
+      case 'declare': return this.confirmDeclare(id);
+      case 'peace': return run('peace', id);
+      case 'influence': return run('influence', id);
+      case 'integrate': return run('integrate', id);
+      case 'spy': return run('spy', id, a.dataset.op);
+      case 'attack-plan': return this.openAttackPlanner(id);
+      case 'nuke-plan': return this.openNukePlanner(id);
+      case 'research': return run('startResearch', id);
+      case 'focus-start': return run('startFocus', id);
+    }
+  },
+
+  result(res) {
+    if (!res) return;
+    if (!res.ok) {
+      this.toast(res.msg || 'Действие недоступно', 'err');
+      Sound.play('error');
+    } else {
+      if (res.msg) this.toast(res.msg, res.warn ? 'warn' : 'ok');
+      Sound.play(res.warn ? 'error' : 'ok');
+    }
+    this.renderAll();
+  },
+
+  onKey(e) {
+    if (!Game.S || ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (this.modals.length) { const top = this.modals[this.modals.length - 1]; if (top.dismissible) this.closeModal(top); }
+      else if (this.selected) this.select(null);
+      else if (this.started) this.openMenu();
+      return;
+    }
+    if (this.modals.length || !this.started) return;
+    if (e.code === 'Space') { e.preventDefault(); this.togglePause(); }
+    else if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') this.setSpeed(Game.S.speed + 1);
+    else if (e.key === '-' || e.code === 'NumpadSubtract') this.setSpeed(Game.S.speed - 1);
+    else if (/^[1-4]$/.test(e.key)) this.setSpeed(+e.key);
+    else if (e.code === 'KeyR') this.openResearch('research');
+    else if (e.code === 'KeyF') this.openResearch('focus');
+    else if (e.code === 'KeyM') this.toggleMapMode();
+  },
+
+  /* ---------------- ВРЕМЯ ---------------- */
+  togglePause() {
+    const S = Game.S;
+    if (!S || S.over) return;
+    if (Net.mp) { Act.call('setPaused', !S.paused); return; }
+    S.paused = !S.paused;
+    this.updateClock();
+  },
+  setSpeed(v) {
+    const S = Game.S;
+    if (!S) return;
+    v = U.clamp(v, 1, 4);
+    if (Net.mp) { Act.call('setSpeed', v); return; }
+    S.speed = v;
+    this.updateClock();
+  },
+  updateClock() {
+    const S = Game.S;
+    if (!S) return;
+    this.el.date.textContent = U.fmtDate(S.date);
+    this.el.pause.innerHTML = `<svg><use href="#${S.paused ? 'i-play' : 'i-pause'}"/></svg>`;
+    this.el.pause.classList.toggle('paused', S.paused);
+    this.el.topbar.classList.toggle('is-paused', S.paused);
+    this.el.pips.forEach((p, i) => p.classList.toggle('on', i < S.speed));
+  },
+  setDayProgress(f) { this.el.dayProg.style.width = (f * 100).toFixed(1) + '%'; },
+
+  /* ---------------- ВЫБОР СТРАНЫ ---------------- */
+  select(id, focusMap) {
+    this.selected = id && Game.c(id) ? id : null;
+    MapView.setSelected(this.selected);
+    if (this.selected && focusMap) MapView.focus(this.selected);
+    this.sig.country = null;
+    this.renderCountry();
+  },
+
+  mapClick(id) {
+    if (this.modals.length || !this.started) return;
+    if (id) Sound.play('click');
+    this.select(id === this.selected ? null : id);
+  },
+
+  mapHover(id) {
+    this.mapHoverId = id;
+    MapView.setHovered(id);
+    if (id) this.showTip(this.countryTip(id));
+    else if (!this.tipTarget) this.hideTip();
+  },
+
+  /* ---------------- ОБНОВЛЕНИЕ КАЖДЫЙ ДЕНЬ ---------------- */
+  onTick() {
+    if (!this.P()) return;
+    this.updateTopbar();
+    this.updateClock();
+    this.renderAll();
+    this.updateLive();
+    if (this.tipTarget && this.tipTarget.dataset.tipk && document.body.contains(this.tipTarget)) {
+      this.showTip(this.tipFns[this.tipTarget.dataset.tipk].call(this));
+    } else if (this.mapHoverId && !this.tipTarget) {
+      this.showTip(this.countryTip(this.mapHoverId));
+    }
+  },
+
+  renderAll() {
+    if (!Game.S || !this.P()) return;
+    this.renderCountry();
+    this.renderDock();
+    if (this.isOpen('research')) this.renderResearch();
+    this.updateTopbar();
+  },
+
+  updateTopbar() {
+    const S = Game.S, P = this.P();
+    if (!S || !P) return;
+    const m = Game.mods;
+    const set = (id, val, delta) => {
+      const r = document.getElementById(id);
+      r.querySelector('.res-val').textContent = val;
+      const d = r.querySelector('.res-delta');
+      if (d && delta != null) d.textContent = delta;
+    };
+    set('res-pp', U.fmt(Math.floor(P.pp)), U.signed(Game.dailyPP(), 1));
+    set('res-fac', U.fmt(Game.playerFactories()), U.pct(Game.industryShare()));
+    set('res-mp', U.fmtMP(P.mp), U.signed(Game.dailyMP(), 1));
+    set('res-rp', U.fmt(Math.floor(P.rp)), U.signed(Game.dailyRP(), 1));
+    const training = P.training.reduce((s, t) => s + t.count, 0);
+    $('#res-div .res-val').textContent = U.fmt(P.divs) + (training ? ` +${training}` : '');
+    $('#res-div .res-org i').style.width = P.org + '%';
+    $('#res-div .res-org').classList.toggle('low', P.org < 35);
+
+    const nk = $('#res-nuke');
+    nk.classList.toggle('hidden', !m.nukes);
+    if (m.nukes) set('res-nuke', P.warheads, `${m.warheadDays - P.warheadTimer} дн.`);
+
+    const t = S.tension;
+    const tEl = $('#res-tension');
+    tEl.querySelector('.res-val').textContent = U.fmt(t, 0) + '%';
+    tEl.querySelector('.tension-bar i').style.width = t + '%';
+    tEl.classList.toggle('t-mid', t >= 35 && t < 50);
+    tEl.classList.toggle('t-high', t >= 50 && t < 75);
+    tEl.classList.toggle('t-crit', t >= 75);
+
+    const freeSlot = P.research.length < 2 && TECHS.some(x => Game.techState(x) === 'available' && P.rp >= Game.techCost(x).rp);
+    $('#badge-research').classList.toggle('hidden', !freeSlot);
+    $('#badge-research').textContent = '!';
+    const freeFocus = !P.focus && FOCUSES.some(f => Game.focusState(f) === 'available');
+    $('#badge-focus').classList.toggle('hidden', !freeFocus);
+    $('#badge-focus').textContent = '!';
+  },
+
+  // Полосы прогресса и счётчики дней обновляем «на месте», без перерисовки HTML
+  updateLive() {
+    const P = this.P(), me = Game.me;
+    if (!P) return;
+    $$('[data-live]').forEach(el => {
+      const kind = el.dataset.live;
+      if (kind === 'org') { el.style.width = P.org + '%'; return; }
+      if (kind === 'orgtxt') { el.textContent = Math.round(P.org) + '%'; return; }
+      const k = el.dataset.k, id = el.dataset.id;
+      let cur = null;
+      const c = Game.c(id);
+      if (k === 'justify') cur = c && Game.justifying(c, me);
+      else if (k === 'influence' || k === 'integrate') cur = c && c[k] && c[k].by === me ? c[k] : null;
+      else if (k === 'train') cur = P.training[+id];
+      else if (k === 'research') cur = P.research.find(r => r.id === id);
+      else if (k === 'focus') cur = P.focus && P.focus.id === id ? P.focus : null;
+      if (!cur) return;
+      if (kind === 'prog') el.style.width = ((1 - cur.daysLeft / cur.total) * 100).toFixed(1) + '%';
+      else el.textContent = U.days(cur.daysLeft);
+    });
+  },
+
+  /* ---------------- ПАНЕЛЬ СТРАНЫ ---------------- */
+  renderCountry() {
+    const panel = this.el.panel;
+    const c = this.selected && Game.c(this.selected);
+    if (!c) {
+      panel.classList.remove('open');
+      this.sig.country = null;
+      return;
+    }
+    const sig = this.countrySig(c);
+    if (sig === this.sig.country) return;
+    this.sig.country = sig;
+    const scroll = panel.querySelector('.cp-body') ? panel.querySelector('.cp-body').scrollTop : 0;
+    panel.innerHTML = this.countryHTML(c);
+    const body = panel.querySelector('.cp-body');
+    if (body) body.scrollTop = scroll;
+    panel.classList.add('open');
+    this.updateLive();
+  },
+
+  countrySig(c) {
+    const P = this.P(), me = Game.me, est = Game.estDivs(c);
+    const reasons = [Game.canJustify(c), Game.canDeclare(c), Game.canPeace(c), Game.canInfluence(c), Game.canIntegrate(c),
+      Game.canAttack(c), Game.canNuke(c), Game.canFortify(c), Game.canDeploy(1), Game.canDeploy(5),
+      ...SPY_OPS.map(op => Game.canSpy(c, op))];
+    return JSON.stringify([c.id, c.faction, c.ctrl, Game.atWar(c), c.cb[me] === true, !!Game.justifying(c), !!c.influence, !!c.integrate, c.radioactive,
+      c.factories, c.fort, Math.round(c.control), Math.round(Game.intel(c) / 5), c.sab, c.sabDays > 0, est.lo, est.hi, Math.round(c.pop / 1e5),
+      reasons, P.divs, P.warheads, Game.S.tension >= 50, Math.round(Game.S.tension / 4), Game.mods.nukes, P.techs.length]);
+  },
+
+  badge(text, cls) { return `<span class="bdg bdg-${cls}">${U.esc(text)}</span>`; },
+
+  costTag(pp, extra = '') {
+    return `<span class="act-cost">${pp != null ? `<svg><use href="#i-pp"/></svg>${pp}` : ''}${extra}</span>`;
+  },
+
+  actBtn({ act, id = '', label, icon, why = null, sub = '', cost = '', cls = '', data = '', tip = '' }) {
+    const dis = !!why;
+    const tipText = dis ? why : tip;
+    return `<button class="act ${cls}${dis ? ' is-disabled' : ''}" data-act="${act}" data-id="${id}" ${data}
+      aria-disabled="${dis}" ${dis ? `data-why="${U.esc(why)}"` : ''} ${tipText ? `data-tip="${U.esc(tipText)}"` : ''}>
+      <svg class="act-ico"><use href="#${icon}"/></svg>
+      <span class="act-text"><span class="act-label">${label}</span>${dis ? `<span class="act-why">${U.esc(why)}</span>` : (sub ? `<span class="act-sub">${sub}</span>` : '')}</span>
+      ${cost}
+    </button>`;
+  },
+
+  stat(label, value, extra = '', tip = '') {
+    return `<div class="st"${tip ? ` data-tip="${U.esc(tip)}"` : ''}><span class="st-l">${label}</span><b class="st-v">${value}</b>${extra}</div>`;
+  },
+
+  pipBar(n, max = 3) {
+    let s = '<span class="pips">';
+    for (let i = 0; i < max; i++) s += `<i class="${i < n ? 'on' : ''}"></i>`;
+    return s + '</span>';
+  },
+
+  meter(pct, cls = '') { return `<div class="meter ${cls}"><i style="width:${U.clamp(pct, 0, 100)}%"></i></div>`; },
+
+  projectBlock(c, k, title) {
+    const me = Game.me;
+    const v = k === 'justify' ? Game.justifying(c, me) : (c[k] && c[k].by === me ? c[k] : null);
+    if (!v) return '';
+    return `<div class="prj"><div class="prj-top"><span>${title}</span><em data-live="days" data-k="${k}" data-id="${c.id}">${U.days(v.daysLeft)}</em></div>
+      <div class="meter meter-gold"><i data-live="prog" data-k="${k}" data-id="${c.id}" style="width:${(1 - v.daysLeft / v.total) * 100}%"></i></div></div>`;
+  },
+
+  countryColor(c) {
+    if (c.radioactive) return COLORS.waste;
+    if (Game.atWar(c, Game.me)) return COLORS.front;
+    if (Game.isPower(c.ctrl)) return POWERS[c.ctrl].color;
+    return (FACTIONS[c.faction] || FACTIONS.NEU).color;
+  },
+
+  // Подпись владельца: держава игрока, ИИ-блок или оккупант
+  ownerLabel(c) {
+    if (Game.isPower(c.ctrl)) {
+      const P = Game.P(c.ctrl);
+      return POWERS[c.ctrl].name + (P.player && c.ctrl !== Game.me ? ` (${P.player})` : '');
+    }
+    return (FACTIONS[c.faction] || FACTIONS.NEU).name;
+  },
+
+  countryHTML(c) {
+    const S = Game.S, m = Game.mods, me = Game.me, d = this.D(), P = this.P();
+    const color = this.countryColor(c);
+    const own = c.ctrl === me;
+    const Y = Game.powerOf(c);
+    const rival = Y && Y !== me;
+    const occupier = !own && !Y && c.ctrl !== c.id ? Game.c(c.ctrl) : null;
+    const est = Game.estDivs(c);
+    const war = Game.atWar(c);
+
+    const badges = [];
+    if (own && c.id === d.capital) badges.push(this.badge('Столица', 'sov'));
+    if (own) badges.push(this.badge(c.core === me ? 'Исконная земля' : 'Присоединённая земля', 'sov'));
+    if (!own) badges.push(this.badge(this.ownerLabel(c), rival ? 'major' : 'fac'));
+    if (rival) badges.push(this.badge('Держава игрока', 'war'));
+    if (Game.isAlly(c)) badges.push(this.badge('Союзник', 'sov'));
+    if (c.major && !own && !rival) badges.push(this.badge('Великая держава', 'major'));
+    if (war) badges.push(this.badge('Война', 'war'));
+    if (occupier) badges.push(this.badge('Оккупант: ' + occupier.name, 'war'));
+    if (c.cb[me] === true) badges.push(this.badge('Повод для войны', 'cb'));
+    if (c.radioactive) badges.push(this.badge('Радиация', 'rad'));
+
+    let html = `<div class="cp-head" style="--fc:${color}">
+      <div class="cp-flag"><span>${U.esc(c.id)}</span></div>
+      <div class="cp-title"><div class="cp-name">${U.esc(c.name)}</div><div class="cp-badges">${badges.join('')}</div></div>
+      <button class="icon-btn" data-ui="close-panel" data-tip="Закрыть (Esc)"><svg><use href="#i-close"/></svg></button>
+    </div><div class="cp-body">`;
+
+    if (c.inert) {
+      html += `<div class="cp-note">Антарктический договор: на континенте нет государств, армий и заводов. Здесь нечего завоёвывать — только лёд.</div></div>`;
+      return html;
+    }
+
+    /* --- Показатели --- */
+    html += '<div class="cp-stats">';
+    html += this.stat('Заводы', U.fmt(c.factories));
+    html += this.stat('Население', U.fmtPop(c.pop));
+    if (own) {
+      const mp = c.radioactive ? 0 : c.pop * CFG.MP_PER_POP * (c.core === me ? 1 : CFG.ANNEXED_MP) * (1 + m.mpMult);
+      html += this.stat('Призыв в день', U.fmt(mp, 2) + ' тыс.');
+      html += this.stat('Укрепления', this.pipBar(c.fort));
+      html += this.stat('Контроль', Math.round(c.control) + '%', this.meter(c.control, c.control < 60 ? 'meter-red' : 'meter-green'));
+    } else {
+      const divTxt = est.exact ? U.fmt(est.mid, 1) : `~${est.lo}–${est.hi}`;
+      html += this.stat(rival ? 'Войска на участке' : 'Дивизии', divTxt, '',
+        rival ? 'Армия державы делится между всеми её враждебными границами.' : '');
+      const def = Combat.defenseBreakdown(c, est.mid).total;
+      html += this.stat('Оборона', (est.exact ? '' : '~') + U.fmt(def, 0));
+      html += this.stat('Укрепления', this.pipBar(c.fort));
+      html += this.stat('Стойкость', '×' + U.fmt(rival ? 1.5 : Game.resilience(c), 1), '',
+        'Во сколько раз медленнее падает контроль противника при наших победах. Растёт с числом заводов: сверхдержавы держатся дольше. Ядерный удар обнуляет заводы — и стойкость.');
+      html += this.stat('Разведданные', Math.round(Game.intel(c)) + '%', this.meter(Game.intel(c), 'meter-violet'));
+      if (war || c.control < 100) html += this.stat('Контроль противника', Math.round(c.control) + '%', this.meter(c.control, 'meter-orange'));
+      if (c.sab > 0) html += this.stat('Саботаж', `−${Math.round(c.sab * 100)}%`, `<span class="st-note">${U.days(c.sabDays)}</span>`);
+    }
+    html += '</div>';
+
+    /* --- Пояснение --- */
+    if (own) {
+      if (c.radioactive) html += `<div class="cp-note warn">Радиоактивная пустошь. Заводы и призыв здесь невозможны навсегда.</div>`;
+      else if (Game.list(t => Game.atWar(t) && Geo.meta[t.id].neighbors.includes(c.id)).length)
+        html += `<div class="cp-note warn">Прифронтовая территория: враг может перейти в наступление. Укрепления повышают оборону на 15% за уровень.</div>`;
+    } else if (Game.isAlly(c)) {
+      html += `<div class="cp-note">Союзник по блоку «${U.esc(d.allyName)}»: +0,1 ПВ в день. Можно мирно интегрировать в состав державы.</div>`;
+    } else {
+      const sup = Game.supplyFactor(c.id);
+      html += `<div class="cp-note ${sup < 1 ? 'warn' : ''}">${sup === 1
+        ? 'Общая граница с нами — полное снабжение наступающих войск.'
+        : sup === 0.8
+          ? 'Граница только через пролив: форсирование водной преграды, −20% к атаке.'
+          : 'Нет общей границы: наступление морским и воздушным десантом, −45% к атаке.'}</div>`;
+      if (rival) html += `<div class="cp-note">За эту державу играет человек. Его армия защищает все границы сразу — чем больше у него фронтов, тем слабее каждый участок.</div>`;
+    }
+
+    html += this.projectBlock(c, 'justify', 'Обоснование войны');
+    html += this.projectBlock(c, 'influence', 'Распространение влияния');
+    html += this.projectBlock(c, 'integrate', 'Интеграция в состав державы');
+
+    /* --- Действия --- */
+    if (own) {
+      const dc = Game.deployCost(1), dc5 = Game.deployCost(5);
+      html += `<div class="cp-sec"><div class="cp-sec-title">Мобилизация и оборона</div>`;
+      html += this.actBtn({ act: 'deploy', label: 'Сформировать дивизию', icon: 'i-div', data: 'data-n="1"', why: Game.canDeploy(1),
+        sub: `${U.fmtMP(dc.mp)} призывников · ${U.days(Game.trainDays())}`, cost: this.costTag(dc.pp) });
+      html += this.actBtn({ act: 'deploy', label: 'Сформировать 5 дивизий', icon: 'i-div', data: 'data-n="5"', why: Game.canDeploy(5),
+        sub: `${U.fmtMP(dc5.mp)} призывников`, cost: this.costTag(dc5.pp) });
+      html += this.actBtn({ act: 'fortify', id: c.id, label: 'Возвести укрепрайон', icon: 'i-shield', why: Game.canFortify(c),
+        sub: '+15% к обороне региона', cost: this.costTag(CFG.FORTIFY_PP) });
+      html += '</div>';
+    } else if (Game.isAlly(c)) {
+      html += `<div class="cp-sec"><div class="cp-sec-title">Дипломатия</div>`;
+      html += this.actBtn({ act: 'integrate', id: c.id, label: 'Интегрировать в состав державы', icon: 'i-flag', why: Game.canIntegrate(c),
+        sub: `${U.days(Game.integrateDays(c))} · напряжённость +3%`, cost: this.costTag(CFG.INTEGRATE.pp) });
+      html += '</div>';
+    } else {
+      html += `<div class="cp-sec"><div class="cp-sec-title">Дипломатия</div>`;
+      if (war) {
+        html += this.actBtn({ act: 'peace', id: c.id, label: rival ? 'Предложить белый мир' : 'Предложить белый мир', icon: 'i-flag', why: Game.canPeace(c),
+          sub: rival ? 'Решение примет второй игрок' : `Шанс согласия ${U.pct(Game.peaceChance(c))}`, cost: this.costTag(CFG.PEACE_PP),
+          tip: 'Мир на условиях статус-кво.' });
+      } else if (c.cb[me] === true) {
+        html += this.actBtn({ act: 'declare', id: c.id, label: 'Объявить войну', icon: 'i-swords', cls: 'act-danger',
+          sub: `Напряжённость +${U.fmt(Game.declareTension(c), 0)}%`, cost: '' });
+      } else {
+        const jc = Game.justifyCost(c);
+        html += this.actBtn({ act: 'justify', id: c.id, label: 'Обосновать войну', icon: 'i-swords', why: Game.canJustify(c),
+          sub: `${U.days(jc.days)} · напряжённость +${U.fmt(CFG.JUSTIFY.tension * (c.major ? 1.5 : 1), 0)}%`, cost: this.costTag(jc.pp),
+          tip: 'Пропаганда готовит casus belli. После обоснования можно объявить войну.' });
+      }
+      if (c.faction === 'NEU' && !war && c.ctrl === c.id) {
+        html += this.actBtn({ act: 'influence', id: c.id, label: 'Распространить влияние', icon: 'i-pp', why: Game.canInfluence(c),
+          sub: `${U.days(CFG.INFLUENCE.days)} · шанс ${U.pct(U.clamp(0.75 - S.tension / 250, 0.25, 0.9))} вступления в блок`,
+          cost: this.costTag(Game.influenceCost()) });
+      }
+      html += '</div>';
+
+      html += `<div class="cp-sec"><div class="cp-sec-title">Разведка и тайные операции</div>`;
+      for (const op of SPY_OPS) {
+        html += this.actBtn({ act: 'spy', id: c.id, data: `data-op="${op.id}"`, label: op.name, icon: op.icon, why: Game.canSpy(c, op),
+          sub: `Шанс успеха ${U.pct(Game.spyChance(c, op))}`, cost: this.costTag(Game.spyCost(op)), tip: op.desc });
+      }
+      html += '</div>';
+
+      html += `<div class="cp-sec"><div class="cp-sec-title">Военные операции</div>`;
+      html += this.actBtn({ act: 'attack-plan', id: c.id, label: 'Спланировать наступление', icon: 'i-div', cls: 'act-primary', why: Game.canAttack(c),
+        sub: `Свободно: ${U.divs(P.divs)} · организация ${Math.round(P.org)}%` });
+      html += '</div>';
+
+      html += `<div class="cp-sec cp-sec-nuke"><div class="cp-sec-title">Стратегическое оружие</div>`;
+      if (m.nukes) {
+        html += this.actBtn({ act: 'nuke-plan', id: c.id, label: 'Ядерный удар', icon: 'i-nuke', cls: 'act-nuke', why: Game.canNuke(c),
+          sub: `Боеголовок: ${P.warheads}` });
+      } else {
+        const done = TECHS.filter(t => t.branch === 'nuclear' && P.techs.includes(t.id) && t.tier <= 4).length;
+        const br = TECH_BRANCHES.find(b => b.id === 'nuclear');
+        html += `<div class="nuke-locked"><svg><use href="#i-nuke"/></svg><div><b>${U.esc(Game.branchName(br))}: ${done} из 4 этапов</b>
+          <span>Изучите ядерную ветку до межконтинентальной ракеты, чтобы открыть ядерный удар.</span></div></div>`;
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  },
+
+  /* ---------------- НИЖНИЙ ДОК: АРМИЯ И ФРОНТЫ ---------------- */
+  renderDock() {
+    const P = this.P(), me = Game.me;
+    // Сначала фронты, граничащие с нами, затем остальные
+    const fronts = Game.fronts().sort((a, b) => Game.bordersPower(b.id) - Game.bordersPower(a.id));
+    const projects = Game.list(c => c.cb[me] || (c.influence && c.influence.by === me) || (c.integrate && c.integrate.by === me));
+    const threatened = Game.lands().filter(c => c.control < 99.5);
+    const sig = JSON.stringify([me, P.divs, P.training.map(t => t.count + ':' + t.total), Game.canDeploy(1), Game.canDeploy(5),
+      fronts.map(c => { const e = Game.estDivs(c); return [c.id, e.lo, e.hi, Math.round(c.control), c.ctrl]; }),
+      projects.map(c => [c.id, c.cb[me] === true, !!c.influence, !!c.integrate]),
+      threatened.map(c => [c.id, Math.round(c.control / 5)])]);
+    if (sig === this.sig.dock) return;
+    this.sig.dock = sig;
+
+    const dc = Game.deployCost(1), dc5 = Game.deployCost(5);
+    let a = `<div class="box-title"><svg><use href="#i-div"/></svg>Вооружённые силы</div>
+      <div class="ab-main">
+        <div class="ab-divs"><b>${P.divs}</b><span>${U.plural(P.divs, 'дивизия', 'дивизии', 'дивизий')}</span></div>
+        <div class="ab-org"><div class="ab-org-top"><span>Организация</span><em data-live="orgtxt">${Math.round(P.org)}%</em></div>
+          <div class="meter meter-green"><i data-live="org" style="width:${P.org}%"></i></div></div>
+      </div><div class="ab-train">`;
+    if (P.training.length) {
+      P.training.forEach((t, i) => {
+        a += `<div class="trn"><span>${U.divs(t.count)}</span><div class="meter"><i data-live="prog" data-k="train" data-id="${i}" style="width:${(1 - t.daysLeft / t.total) * 100}%"></i></div><em data-live="days" data-k="train" data-id="${i}">${U.days(t.daysLeft)}</em></div>`;
+      });
+    } else {
+      a += `<div class="trn-empty">Обучение не ведётся</div>`;
+    }
+    a += `</div><div class="ab-btns">
+      ${this.actBtn({ act: 'deploy', label: '+1 дивизия', icon: 'i-plus', data: 'data-n="1"', why: Game.canDeploy(1), cls: 'act-sm', cost: this.costTag(dc.pp),
+        tip: `${dc.pp} ПВ и ${U.fmtMP(dc.mp)} призывников. Обучение: ${U.days(Game.trainDays())}.` })}
+      ${this.actBtn({ act: 'deploy', label: '+5 дивизий', icon: 'i-plus', data: 'data-n="5"', why: Game.canDeploy(5), cls: 'act-sm', cost: this.costTag(dc5.pp),
+        tip: `${dc5.pp} ПВ и ${U.fmtMP(dc5.mp)} призывников.` })}
+    </div>`;
+    this.el.army.innerHTML = a;
+
+    let f = `<div class="box-title"><svg><use href="#i-swords"/></svg>Фронты и операции<span class="box-count">${fronts.length ? fronts.length + ' ' + U.plural(fronts.length, 'фронт', 'фронта', 'фронтов') : ''}</span></div><div class="fc-list">`;
+    const cards = [];
+    for (const c of fronts) {
+      const e = Game.estDivs(c);
+      const Y = Game.powerOf(c);
+      const tag = Y ? POWERS[Y].name : (c.ctrl !== c.id ? 'оккупирована' : '');
+      cards.push(`<div class="fc fc-war" data-act="select" data-id="${c.id}">
+        <div class="fc-top"><span class="fc-name">${U.esc(c.name)}</span>${tag ? `<span class="fc-tag">${U.esc(tag)}</span>` : ''}</div>
+        <div class="fc-row"><span>Противник</span><b>${e.exact ? U.fmt(e.mid, 1) : '~' + e.lo + '–' + e.hi} див.</b></div>
+        <div class="meter meter-orange"><i style="width:${c.control}%"></i></div>
+        <div class="fc-row fc-small"><span>Контроль противника</span><b>${Math.round(c.control)}%</b></div>
+        <button class="btn btn-xs btn-red" data-act="attack-plan" data-id="${c.id}"><svg><use href="#i-swords"/></svg>Атаковать</button>
+      </div>`);
+    }
+    for (const c of threatened) {
+      cards.push(`<div class="fc fc-threat" data-act="select" data-id="${c.id}">
+        <div class="fc-top"><span class="fc-name">${U.esc(c.name)}</span><span class="fc-tag">под ударом</span></div>
+        <div class="meter meter-red"><i style="width:${c.control}%"></i></div>
+        <div class="fc-row fc-small"><span>Наш контроль</span><b>${Math.round(c.control)}%</b></div>
+      </div>`);
+    }
+    for (const c of projects) {
+      let body = '';
+      if (c.cb[me] === true) {
+        body = `<div class="fc-row"><span>Повод для войны получен</span></div>
+          <button class="btn btn-xs btn-red" data-act="declare" data-id="${c.id}">Объявить войну</button>`;
+      } else {
+        const k = Game.justifying(c, me) ? 'justify' : (c.influence && c.influence.by === me) ? 'influence' : 'integrate';
+        const v = k === 'justify' ? Game.justifying(c, me) : c[k];
+        const name = { justify: 'Обоснование войны', influence: 'Влияние', integrate: 'Интеграция' }[k];
+        body = `<div class="fc-row"><span>${name}</span><b data-live="days" data-k="${k}" data-id="${c.id}">${U.days(v.daysLeft)}</b></div>
+          <div class="meter meter-gold"><i data-live="prog" data-k="${k}" data-id="${c.id}" style="width:${(1 - v.daysLeft / v.total) * 100}%"></i></div>`;
+      }
+      cards.push(`<div class="fc fc-prj" data-act="select" data-id="${c.id}"><div class="fc-top"><span class="fc-name">${U.esc(c.name)}</span></div>${body}</div>`);
+    }
+    if (!cards.length) {
+      f += `<div class="fc-empty"><b>Активных фронтов нет.</b> Кликните по стране на карте, обоснуйте войну и объявите её — территория станет фронтом.</div>`;
+    } else f += cards.join('');
+    f += '</div>';
+    this.el.fronts.innerHTML = f;
+  },
+
+  /* ---------------- ЖУРНАЛ ---------------- */
+  logHTML(e) {
+    return `<div class="log-entry cat-${e.cat}${e.cid ? ' has-link' : ''}" data-cat="${e.cat}" ${e.cid ? `data-act="log-goto" data-id="${e.cid}"` : ''}>
+      <div class="log-meta"><span class="log-badge">${LOG_BADGES[e.cat] || 'Сводка'}</span><span class="log-date">${U.fmtDateShort(e.date)}</span></div>
+      <div class="log-title">${U.esc(e.title)}</div>
+      <div class="log-text">${U.esc(e.text)}</div>
+    </div>`;
+  },
+
+  addLogEntry(e, animate) {
+    const list = this.el.logList;
+    list.insertAdjacentHTML('afterbegin', this.logHTML(e));
+    const node = list.firstElementChild;
+    if (!this.matchesFilter(e.cat)) node.classList.add('filtered');
+    if (animate) node.classList.add('fresh');
+    while (list.children.length > 150) list.lastElementChild.remove();
+    if (this.logCollapsed) {
+      this.unread++;
+      this.el.logUnread.textContent = this.unread;
+      this.el.logUnread.classList.remove('hidden');
+    }
+  },
+
+  rebuildLog() {
+    this.el.logList.innerHTML = Game.S.log.filter(e => !e.to || e.to === Game.me).slice(0, 150).map(e => this.logHTML(e)).join('');
+    this.applyLogFilter();
+  },
+
+  matchesFilter(cat) { return this.logFilter === 'all' || (LOG_GROUPS[this.logFilter] || []).includes(cat); },
+
+  applyLogFilter() {
+    $$('.log-entry', this.el.logList).forEach(n => n.classList.toggle('filtered', !this.matchesFilter(n.dataset.cat)));
+  },
+
+  toggleLog() {
+    this.logCollapsed = !this.logCollapsed;
+    document.body.classList.toggle('log-collapsed', this.logCollapsed);
+    this.el.logReopen.classList.toggle('hidden', !this.logCollapsed);
+    if (!this.logCollapsed) { this.unread = 0; this.el.logUnread.classList.add('hidden'); }
+    setTimeout(() => MapView.resize(), 260);
+  },
+
+  /* ---------------- ПОДСКАЗКИ ---------------- */
+  initTooltips() {
+    document.addEventListener('mouseover', e => {
+      const t = e.target.closest('[data-tip],[data-tipk]');
+      if (t === this.tipTarget) return;
+      this.tipTarget = t;
+      if (!t) {
+        if (this.mapHoverId && e.target.closest('#map-root')) this.showTip(this.countryTip(this.mapHoverId));
+        else this.hideTip();
+        return;
+      }
+      if (t.dataset.tipk && !Game.S) return;
+      this.showTip(t.dataset.tipk ? this.tipFns[t.dataset.tipk].call(this) : `<div class="tt-plain">${U.esc(t.dataset.tip)}</div>`);
+    });
+    document.addEventListener('mousemove', e => {
+      this.mouse.x = e.clientX;
+      this.mouse.y = e.clientY;
+      // Мышь ушла с карты на панель — сбрасываем подсветку страны
+      if (this.mapHoverId && !e.target.closest('#map-root')) {
+        this.mapHoverId = null;
+        MapView.setHovered(null);
+        if (!this.tipTarget) this.hideTip();
+      }
+      if (this.el.tip.classList.contains('show')) this.positionTip();
+    });
+  },
+
+  showTip(html) {
+    const t = this.el.tip;
+    t.innerHTML = html;
+    t.classList.add('show');
+    this.positionTip();
+  },
+
+  hideTip() { this.el.tip.classList.remove('show'); },
+
+  positionTip() {
+    const t = this.el.tip, pad = 14;
+    const w = t.offsetWidth, h = t.offsetHeight;
+    let x = this.mouse.x + 16, y = this.mouse.y + 18;
+    if (x + w > window.innerWidth - pad) x = this.mouse.x - w - 12;
+    if (y + h > window.innerHeight - pad) y = this.mouse.y - h - 12;
+    t.style.transform = `translate(${Math.max(pad, x)}px, ${Math.max(pad, y)}px)`;
+  },
+
+  countryTip(id) {
+    const c = Game.c(id);
+    if (!c || !Game.S) return '';
+    const own = c.ctrl === Game.me;
+    const est = Game.estDivs(c);
+    const war = Game.atWar(c);
+    const status = c.radioactive ? 'радиоактивная пустошь' : war ? 'активный фронт' : c.cb[Game.me] === true ? 'повод для войны получен' : Game.justifying(c) ? 'идёт обоснование войны' : '';
+    let rows = `<span>Заводы</span><b>${U.fmt(c.factories)}</b>`;
+    if (!own && !c.inert) rows += `<span>${Game.isPower(c.ctrl) ? 'Войска на участке' : 'Дивизии'}</span><b>${est.exact ? U.fmt(est.mid, 1) : '~' + est.lo + '–' + est.hi}</b>`;
+    if (c.fort) rows += `<span>Укрепления</span><b>${c.fort}</b>`;
+    if (war || c.control < 100) rows += `<span>Контроль</span><b>${Math.round(c.control)}%</b>`;
+    return `<div class="tt-title"><i style="background:${this.countryColor(c)}"></i>${U.esc(c.name)}</div>
+      <div class="tt-sub">${own ? (c.core === Game.me ? 'Наша исконная земля' : 'Присоединённая территория') : U.esc(this.ownerLabel(c))}${status ? ' · ' + status : ''}</div>
+      <div class="tt-grid">${rows}</div><div class="tt-hint">ЛКМ — открыть панель страны</div>`;
+  },
+
+  tipFns: {
+    pp() {
+      const m = Game.mods, d = Game.diff, allies = Game.allies().length;
+      return `<div class="tt-title">Политическая власть</div>
+        <div class="tt-text">Главная валюта решений: обоснование войны, мобилизация, разведка, дипломатия.</div>
+        <div class="tt-grid"><span>База</span><b>+${U.fmt(CFG.PP_BASE, 1)}</b><span>Фокусы и наука</span><b>+${U.fmt(m.pp, 1)}</b>
+        <span>Союзники по блоку (${allies})</span><b>+${U.fmt(allies * 0.1, 1)}</b><span>Сложность</span><b>×${d.pp}</b>
+        <span>Итого в день</span><b class="pos">${U.signed(Game.dailyPP(), 2)}</b></div>`;
+    },
+    fac() {
+      const m = Game.mods;
+      return `<div class="tt-title">Заводы</div>
+        <div class="tt-text">Каждый завод даёт ${CFG.RP_PER_FACTORY} ОИ в день. Доля мировой промышленности ${U.pct(Game.industryShare(), 1)} — для победы нужно ${U.pct(CFG.VICTORY_SHARE)}.</div>
+        <div class="tt-grid"><span>Наши заводы</span><b>${Game.playerFactories()}</b><span>Во всём мире</span><b>${Game.worldFactories()}</b>
+        <span>Пассивный рост</span><b>${isFinite(m.factoryEvery) ? '+1 за ' + U.days(m.factoryEvery) : 'нет (нужна наука)'}</b></div>`;
+    },
+    mp() {
+      return `<div class="tt-title">Призывники</div>
+        <div class="tt-text">Нужны для формирования дивизий (${CFG.DIV.mp} тыс. на дивизию). Присоединённые земли дают половину призыва.</div>
+        <div class="tt-grid"><span>В резерве</span><b>${U.fmtMP(this.P().mp)}</b><span>Прирост в день</span><b class="pos">${U.signed(Game.dailyMP(), 2)} тыс.</b></div>`;
+    },
+    div() {
+      const P = this.P();
+      const tr = P.training.reduce((s, t) => s + t.count, 0);
+      return `<div class="tt-title">Дивизии</div>
+        <div class="tt-text">Развёрнутые соединения. Нижняя полоса — организация: каждое наступление её расходует, восстановление ${U.fmt(Game.mods.orgRegen, 1)}% в день. В обороне армия делится между всеми враждебными границами.</div>
+        <div class="tt-grid"><span>Развёрнуто</span><b>${P.divs}</b><span>В обучении</span><b>${tr}</b><span>Организация</span><b>${Math.round(P.org)}%</b>
+        <span>Атака дивизии</span><b>${U.fmt(CFG.DIV.attack * Game.mods.attack * (1 + Game.mods.attackBonus), 1)}</b></div>`;
+    },
+    rp() {
+      return `<div class="tt-title">Очки исследований</div>
+        <div class="tt-text">Тратятся на технологии. Растут от заводов. Черта лидера ${U.esc(this.D().trait)} даёт +10%.</div>
+        <div class="tt-grid"><span>Накоплено</span><b>${U.fmt(this.P().rp, 0)}</b><span>Прирост в день</span><b class="pos">${U.signed(Game.dailyRP(), 2)}</b>
+        <span>Бонус науки</span><b>+${U.pct(Game.mods.rp)}</b></div>`;
+    },
+    nuke() {
+      const P = this.P(), m = Game.mods;
+      return `<div class="tt-title">Ядерные боеголовки</div>
+        <div class="tt-text">Стратегический удар превращает регион в радиоактивную пустошь навсегда. ${CFG.NUCLEAR_WINTER} пустошей — ядерная зима и конец игры для всех.</div>
+        <div class="tt-grid"><span>В арсенале</span><b>${P.warheads}</b><span>Следующая через</span><b>${U.days(m.warheadDays - P.warheadTimer)}</b>
+        <span>Пустошей в мире</span><b>${Game.wastelands()} / ${CFG.NUCLEAR_WINTER}</b></div>`;
+    },
+    tension() {
+      const t = Game.S.tension;
+      const row = (th, txt) => `<span class="${t >= th ? 'neg' : ''}">${th}%</span><b class="${t >= th ? 'neg' : ''}">${txt}</b>`;
+      return `<div class="tt-title">Мировая напряжённость: ${U.fmt(t, 1)}%</div>
+        <div class="tt-text">Растёт от агрессии, шпионских провалов и ядерного оружия. Медленно спадает в мирное время. Общая для всех держав.</div>
+        <div class="tt-grid">${row(50, 'Оборонительная мобилизация блоков')}${row(75, 'DEFCON 2, блоки вступают в войны')}${row(80, 'Соседи могут напасть первыми')}${row(95, 'Риск ядерного удара США (если ими правит ИИ)')}</div>`;
+    },
+    leader() {
+      const d = this.D();
+      return `<div class="tt-title">${U.esc(d.leader)}</div>
+        <div class="tt-sub">${U.esc(d.title)} · с 5 марта 1953</div>
+        <div class="tt-text">${U.esc(d.bio)}</div>
+        <div class="tt-grid"><span>Черта</span><b>${U.esc(d.trait)}</b><span>Эффект</span><b class="pos">+10% к очкам исследований</b></div>`;
+    },
+    net() {
+      const room = Net.room;
+      if (!room) return '<div class="tt-plain">Сетевая игра</div>';
+      const rows = room.players.map(p => `<span>${U.esc(p.name)}${p.online ? '' : ' (не в сети)'}</span><b>${p.power ? POWERS[p.power].name : '—'}</b>`).join('');
+      return `<div class="tt-title">Комната ${U.esc(room.code)}</div><div class="tt-grid">${rows}</div>`;
+    }
+  },
+
+  /* ---------------- УВЕДОМЛЕНИЯ ---------------- */
+  toast(msg, type = 'info') {
+    const t = document.createElement('div');
+    t.className = 'toast toast-' + type;
+    t.textContent = msg;
+    this.el.toasts.appendChild(t);
+    requestAnimationFrame(() => t.classList.add('show'));
+    setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, type === 'err' ? 2600 : 3200);
+    while (this.el.toasts.children.length > 4) this.el.toasts.firstElementChild.remove();
+  },
+
+  flash(strong) {
+    const f = this.el.flash;
+    f.classList.remove('go', 'go-strong');
+    void f.offsetWidth;
+    f.classList.add(strong ? 'go-strong' : 'go');
+    document.body.classList.remove('shake');
+    void document.body.offsetWidth;
+    document.body.classList.add('shake');
+    setTimeout(() => document.body.classList.remove('shake'), 900);
+  },
+
+  /* ---------------- МОДАЛЬНЫЕ ОКНА ----------------
+     В одиночной игре открытое окно ставит время на паузу. В сетевой — нет:
+     время общее и не должно останавливаться из-за окна одного игрока. */
+  pushPause() {
+    if (Net.mp) return;
+    if (this.pauseDepth++ === 0 && Game.S) {
+      this.resumeAfter = !Game.S.paused;
+      Game.S.paused = true;
+      this.updateClock();
+    }
+  },
+  popPause() {
+    if (Net.mp) return;
+    if (this.pauseDepth > 0 && --this.pauseDepth === 0 && Game.S) {
+      if (this.resumeAfter && !Game.S.over) Game.S.paused = false;
+      this.updateClock();
+    }
+  },
+
+  openModal({ key, cls = '', html, dismissible = true, pause = true, onOpen, onClose }) {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-wrap';
+    wrap.innerHTML = `<div class="modal glass ${cls}" role="dialog" aria-modal="true">
+      ${dismissible ? '<button class="icon-btn modal-x" data-ui="modal-close" data-tip="Закрыть (Esc)"><svg><use href="#i-close"/></svg></button>' : ''}${html}</div>`;
+    this.el.modalRoot.appendChild(wrap);
+    const m = { key, wrap, dismissible, pause, onClose };
+    this.modals.push(m);
+    if (pause) this.pushPause();
+    wrap.addEventListener('mousedown', e => { if (e.target === wrap && dismissible) this.closeModal(m); });
+    requestAnimationFrame(() => wrap.classList.add('show'));
+    this.hideTip();
+    this.tipTarget = null;
+    if (onOpen) onOpen(wrap.firstElementChild, m);
+    return m;
+  },
+
+  closeModal(m) {
+    if (!m) m = this.modals[this.modals.length - 1];
+    const i = this.modals.indexOf(m);
+    if (i < 0) return;
+    this.modals.splice(i, 1);
+    m.wrap.classList.remove('show');
+    setTimeout(() => m.wrap.remove(), 220);
+    if (m.pause) this.popPause();
+    if (m.onClose) m.onClose();
+    this.hideTip();
+    this.tipTarget = null;
+    setTimeout(() => this.nextEvent(), 150);
+  },
+
+  closeAll() {
+    this.modals.slice().forEach(m => this.closeModal(m));
+    this.pauseDepth = 0;
+  },
+
+  isOpen(key) { return this.modals.some(m => m.key === key); },
+  modalEl(key) { const m = this.modals.find(x => x.key === key); return m ? m.wrap.firstElementChild : null; },
+
+  /* ---------------- СОБЫТИЯ ---------------- */
+  nextEvent() {
+    if (this.isOpen('event') || !this.eventQueue.length || !this.started) return;
+    const wait = this.fxBusyUntil - performance.now();
+    if (wait > 0) { clearTimeout(this.evTimer); this.evTimer = setTimeout(() => this.nextEvent(), wait + 50); return; }
+    // Не перекрываем вступление, итоги игры, сводки боя и ядерного удара — событие подождёт их закрытия
+    if (this.modals.some(m => ['intro', 'gameover', 'battle', 'nuke', 'nukereport'].includes(m.key))) return;
+    const { iid, view } = this.eventQueue.shift();
+    const cat = view.cat || 'info';
+    const html = `<div class="ev">
+      <div class="ev-art cat-${cat}"><div class="ev-art-grid"></div><svg><use href="#${view.art || 'i-flag'}"/></svg><span class="ev-stamp">${LOG_BADGES[cat] || 'Сводка'}</span></div>
+      <div class="ev-body">
+        <div class="ev-date">${U.fmtDate(Game.S.date)}</div>
+        <h2 class="ev-title">${U.esc(view.title)}</h2>
+        <p class="ev-text">${U.esc(view.text)}</p>
+        <div class="ev-options">${view.options.map((o, i) => `<button class="ev-opt" data-i="${i}"><span class="ev-opt-label">${U.esc(o.label)}</span>${o.tip ? `<span class="ev-opt-tip">${U.esc(o.tip)}</span>` : ''}</button>`).join('')}</div>
+      </div></div>`;
+    Sound.play(cat === 'alert' || cat === 'nuke' ? 'alert' : 'event');
+    this.openModal({
+      key: 'event', cls: 'm-event', html, dismissible: false,
+      onOpen: (el, m) => {
+        m.iid = iid;
+        el.querySelectorAll('.ev-opt').forEach(b => b.addEventListener('click', () => {
+          if (m.answered) return;
+          m.answered = true;
+          Sound.play('click');
+          Act.call('chooseEvent', iid, +b.dataset.i).then(res => { if (res && !res.ok) this.toast(res.msg, 'err'); this.renderAll(); });
+          this.closeModal(m);
+        }));
+      }
+    });
+  },
+
+  // Сервер решил событие сам (например, игрок слишком долго не отвечал)
+  dropEvent(iid) {
+    this.eventQueue = this.eventQueue.filter(e => e.iid !== iid);
+    const m = this.modals.find(x => x.key === 'event' && x.iid === iid);
+    if (m) this.closeModal(m);
+  },
+
+  /* ---------------- ОБЪЯВЛЕНИЕ ВОЙНЫ ---------------- */
+  confirmDeclare(id) {
+    const c = Game.c(id);
+    const why = Game.canDeclare(c);
+    if (why) return this.result(Game.fail(why));
+    const Y = Game.powerOf(c);
+    const F = FACTIONS[c.faction];
+    const leader = !Y && F && F.leader && F.leader !== c.id ? Game.c(F.leader) : null;
+    let warn = '';
+    if (Y) {
+      warn = `<li class="neg">За эту державу играет человек${Game.P(Y).player ? ' (' + U.esc(Game.P(Y).player) + ')' : ''}. Все её земли, граничащие с нами, станут фронтом — и для неё тоже.</li>`;
+    } else if (leader && Game.isPower(leader.ctrl)) {
+      warn = `<li class="neg">Лидер блока (${U.esc(POWERS[leader.ctrl].name)}) — живой игрок, он узнает о нападении на союзника.</li>`;
+    } else if (leader && leader.ctrl === leader.id) {
+      warn = `<li class="neg">${U.esc(leader.name)} — лидер блока «${F.name}» — пришлёт подкрепления и может вступить в войну (шанс ${U.pct(Game.S.tension >= 75 ? 1 : Math.min(1, (Game.S.tension + Game.declareTension(c)) / 150))}).</li>`;
+    }
+    const html = `<div class="mh"><svg><use href="#i-swords"/></svg><div><div class="mh-k">Объявление войны</div><h2>${U.esc(Y ? POWERS[Y].name : c.name)}</h2></div></div>
+      <ul class="consequences">
+        <li>${Y ? 'Начнётся война между державами.' : 'Территория станет активным фронтом. Противник проведёт мобилизацию (+15% дивизий).'}</li>
+        <li class="neg">Мировая напряжённость +${U.fmt(Game.declareTension(c), 0)}%.</li>
+        ${warn}
+        ${c.faction === 'AXIS' && Game.me === 'SOV' && !Y ? '<li class="pos">Запад одобряет войну с Осью: рост напряжённости вдвое ниже.</li>' : ''}
+      </ul>
+      <div class="m-actions"><button class="btn" data-cancel>Отмена</button><button class="btn btn-red" data-go><svg><use href="#i-swords"/></svg>Объявить войну</button></div>`;
+    this.openModal({
+      key: 'declare', cls: 'm-small', html,
+      onOpen: (el, m) => {
+        el.querySelector('[data-cancel]').onclick = () => this.closeModal(m);
+        el.querySelector('[data-go]').onclick = () => { this.closeModal(m); Act.call('declareWar', id).then(res => this.result(res)); };
+      }
+    });
+  },
+
+  /* ---------------- ПЛАНИРОВАНИЕ НАСТУПЛЕНИЯ ---------------- */
+  bestCommit(c) {
+    const P = this.P();
+    for (let n = 1; n <= P.divs; n++) if (Combat.estimate(c, n).pWin >= 0.8) return n;
+    return P.divs;
+  },
+
+  openAttackPlanner(id) {
+    const c = Game.c(id);
+    const why = Game.canAttack(c);
+    if (why) return this.result(Game.fail(why));
+    const P = this.P();
+    let n = this.bestCommit(c);
+    const est = Game.estDivs(c);
+    const html = `<div class="mh"><svg><use href="#i-div"/></svg><div><div class="mh-k">Планирование наступления</div><h2>${U.esc(c.name)}</h2></div></div>
+      <div class="ap-intel">
+        <div><span>Противник</span><b>${est.exact ? U.fmt(est.mid, 1) : '~' + est.lo + '–' + est.hi} див.</b></div>
+        <div><span>Разведданные</span><b>${Math.round(Game.intel(c))}%</b></div>
+        <div><span>Контроль противника</span><b>${Math.round(c.control)}%</b></div>
+        <div><span>Снабжение</span><b class="${Game.supplyFactor(id) < 1 ? 'neg' : 'pos'}">${Game.supplyLabel(id)}</b></div>
+      </div>
+      <label class="ap-label">Задействовать дивизий: <b id="ap-n">${n}</b> из ${P.divs}</label>
+      <input type="range" id="ap-range" min="1" max="${P.divs}" value="${n}">
+      <div class="ap-odds">
+        <div class="odds-ring" id="ap-ring"><b id="ap-win">0%</b><span>шанс победы</span></div>
+        <div class="ap-figs">
+          <div><span>Сила атаки</span><b id="ap-att">0</b></div>
+          <div><span>Оборона (оценка)</span><b id="ap-def">0</b></div>
+          <div><span>Шанс прорыва (×2)</span><b id="ap-break">0%</b></div>
+          <div><span>Ожидаемые потери</span><b id="ap-loss">0</b></div>
+          <div><span>Расход организации</span><b id="ap-org">0</b></div>
+        </div>
+      </div>
+      <div class="ap-cols"><div><div class="ap-col-t">Наша атака</div><ul class="mods" id="ap-amods"></ul></div>
+        <div><div class="ap-col-t">Оборона противника</div><ul class="mods" id="ap-dmods"></ul></div></div>
+      ${est.exact ? '' : '<div class="cp-note warn">Разведданные неполны — оценка обороны может ошибаться. Проведите «Сбор разведданных».</div>'}
+      <div class="m-actions"><button class="btn" data-cancel>Отмена</button><button class="btn btn-red" data-go><svg><use href="#i-swords"/></svg>Начать наступление</button></div>`;
+    this.openModal({
+      key: 'attack', cls: 'm-attack', html,
+      onOpen: (el, m) => {
+        const range = el.querySelector('#ap-range');
+        const upd = () => this.updateAttackPlanner(el, c, n);
+        range.addEventListener('input', () => { n = +range.value; upd(); });
+        el.querySelector('[data-cancel]').onclick = () => this.closeModal(m);
+        el.querySelector('[data-go]').onclick = () => {
+          this.closeModal(m);
+          Act.call('attack', id, n).then(res => { if (!res.ok) this.result(res); });
+        };
+        upd();
+      }
+    });
+  },
+
+  modsList(lines) {
+    return lines.map(l => `<li><span>${U.esc(l.label)}</span><b class="${l.mult != null ? (l.mult >= 1 ? 'pos' : 'neg') : ''}">${l.mult != null ? '×' + U.fmt(l.mult, 2) : U.fmt(l.value, 0)}</b></li>`).join('');
+  },
+
+  updateAttackPlanner(el, c, n) {
+    const e = Combat.estimate(c, n);
+    el.querySelector('#ap-n').textContent = n;
+    el.querySelector('#ap-win').textContent = U.pct(e.pWin);
+    el.querySelector('#ap-ring').style.setProperty('--p', (e.pWin * 100).toFixed(1));
+    el.querySelector('#ap-ring').className = 'odds-ring ' + (e.pWin >= 0.7 ? 'good' : e.pWin >= 0.4 ? 'mid' : 'bad');
+    el.querySelector('#ap-att').textContent = U.fmt(e.att.total, 0);
+    el.querySelector('#ap-def').textContent = (e.exact ? '' : '~') + U.fmt(e.def.total, 0);
+    el.querySelector('#ap-break').textContent = U.pct(e.pBreak);
+    el.querySelector('#ap-loss').textContent = '~' + U.fmt(e.expLoss, 1) + ' див.';
+    el.querySelector('#ap-org').textContent = '−' + e.orgCost + '%';
+    el.querySelector('#ap-amods').innerHTML = this.modsList(e.att.lines);
+    el.querySelector('#ap-dmods').innerHTML = this.modsList(e.def.lines);
+  },
+
+  /* ---------------- СВОДКА БОЯ ---------------- */
+  die(v) {
+    const pos = { 1: [5], 2: [1, 9], 3: [1, 5, 9], 4: [1, 3, 7, 9], 5: [1, 3, 5, 7, 9], 6: [1, 3, 4, 6, 7, 9] }[v];
+    let s = '<div class="die">';
+    for (let i = 1; i <= 9; i++) s += `<i class="${pos.includes(i) ? 'on' : ''}"></i>`;
+    return s + '</div>';
+  },
+
+  onBattle(r) {
+    MapView.fxBattle(r.targetId, r.ratio >= 1, r.by);
+    Sound.play('battle');
+    setTimeout(() => this.showBattleReport(r), 650);
+  },
+
+  showBattleReport(r) {
+    const A = r.att, D = r.def;
+    const share = A.power / (A.power + D.power) * 100;
+    const enemyColor = r.targetColor || (FACTIONS[r.targetFaction] || FACTIONS.NEU).color;
+    const tone = r.capitulated ? 'cap' : r.outcome.tone;
+    const headline = r.capitulated
+      ? (r.liberation ? 'Территория освобождена' : r.captured ? 'Территория захвачена' : 'Капитуляция противника')
+      : r.outcome.title;
+    let summary = r.outcome.text;
+    if (r.capitulated) {
+      if (r.liberation) summary += ` Наша земля «${r.targetName}» возвращена под наш контроль.`;
+      else if (r.captured) summary += ` Земля «${r.targetName}» отбита у вражеской державы, заводов получено: ${r.annexedFactories}.`;
+      else summary += ` ${r.targetName} капитулирует. Территория присоединена вместе с ${r.annexedFactories} ${U.plural(r.annexedFactories, 'заводом', 'заводами', 'заводами')}.`;
+    } else if (r.ratio >= 1) {
+      summary += ` Контроль противника упал до ${Math.round(r.controlAfter)}%. Ещё несколько ударов — и фронт рухнет.`;
+    } else {
+      summary += ' Рекомендуется восстановить организацию, усилить группировку или провести саботаж обороны.';
+    }
+    const ctrlAfter = Math.round(r.controlAfter);
+    const myName = POWERS[r.by].name;
+    const html = `<div class="br">
+      <div class="br-top"><div><div class="mh-k">Сводка боевых действий · ${U.fmtDate(r.date)}</div><h2>${U.esc(r.op)}</h2><div class="br-front">Фронт: ${U.esc(r.targetName)}${r.defender ? ' · противник: ' + U.esc(POWERS[r.defender].name) : ''}</div></div>
+        <div class="br-outcome tone-${tone}">${U.esc(headline)}</div></div>
+      <div class="br-sides">
+        <div class="br-side sov"><div class="br-side-head"><i style="background:${POWERS[r.by].color}"></i>${U.esc(myName)} · ${A.divs} див.</div>
+          <div class="br-power">${U.fmt(A.power, 0)}</div><div class="br-power-l">сила атаки</div>
+          <div class="br-dice">${this.die(A.dice[0])}${this.die(A.dice[1])}<span>2d6 = ${A.dice[0] + A.dice[1]} → ×${U.fmt(A.roll, 2)}</span></div>
+          <ul class="mods">${this.modsList(A.lines)}</ul></div>
+        <div class="br-vs"><div class="br-ratio">${U.fmt(r.ratio, 2)}</div><div class="br-ratio-l">соотношение сил</div></div>
+        <div class="br-side enemy"><div class="br-side-head"><i style="background:${enemyColor}"></i>${U.esc(r.targetName)} · ${U.fmt(D.divs, 1)} див.</div>
+          <div class="br-power">${U.fmt(D.power, 0)}</div><div class="br-power-l">сила обороны</div>
+          <div class="br-dice">${this.die(D.dice[0])}${this.die(D.dice[1])}<span>2d6 = ${D.dice[0] + D.dice[1]} → ×${U.fmt(D.roll, 2)}</span></div>
+          <ul class="mods">${this.modsList(D.lines)}</ul></div>
+      </div>
+      <div class="br-balance"><i style="width:${share}%"></i><span class="br-mid"></span></div>
+      <div class="br-tiles">
+        <div class="tile neg"><span>Наши потери</span><b>${r.playerLost} див.</b><em>${U.fmt(r.playerMPLost, 0)} тыс. чел.</em></div>
+        <div class="tile pos"><span>Потери противника</span><b>${U.fmt(r.enemyLost, 1)} див.</b><em>осталось ${U.fmt(r.enemyAfter, 1)}</em></div>
+        <div class="tile gold"><span>Трофеи</span><b>+${r.capitulated ? r.annexedFactories + r.loot : r.loot} ${U.plural(r.capitulated ? r.annexedFactories + r.loot : r.loot, 'завод', 'завода', 'заводов')}</b><em>${r.capitulated ? 'вся промышленность региона' : 'вывезено в тыл'}</em></div>
+        <div class="tile"><span>Контроль противника</span><b>${Math.round(r.controlBefore)}% → ${ctrlAfter}%</b><em>стойкость ×${U.fmt(r.resilience, 1)}</em>${this.meter(ctrlAfter, 'meter-orange')}</div>
+        <div class="tile"><span>Организация армии</span><b>−${r.orgCost}%</b><em>осталось ${Math.round(r.orgLeft)}%</em></div>
+        <div class="tile neg"><span>Напряжённость</span><b>+${U.fmt(r.tension, 1)}%</b><em>${r.ppGain ? '+' + r.ppGain + ' ПВ за победу' : 'без пропагандистского эффекта'}</em></div>
+      </div>
+      <div class="br-summary">${U.esc(summary)}</div>
+      <div class="m-actions">
+        ${!r.capitulated && Game.canAttack(Game.c(r.targetId)) === null ? `<button class="btn btn-red" data-again><svg><use href="#i-swords"/></svg>Новое наступление</button>` : ''}
+        <button class="btn btn-gold" data-ok>Продолжить</button>
+      </div></div>`;
+    if (r.capitulated) Sound.play('victory');
+    this.openModal({
+      key: 'battle', cls: 'm-battle', html,
+      onOpen: (el, m) => {
+        el.querySelector('[data-ok]').onclick = () => this.closeModal(m);
+        const again = el.querySelector('[data-again]');
+        if (again) again.onclick = () => { this.closeModal(m); this.openAttackPlanner(r.targetId); };
+      }
+    });
+  },
+
+  onEnemyAttack(r) {
+    if (r.power !== Game.me) return;
+    if (r.srcId) MapView.fxEnemyAttack(r.srcId, r.targetId, r.ratio >= 1);
+    const c = Game.c(r.targetId);
+    if (r.ratio >= 1 && r.controlDrop >= 20 && c) this.toast(`Противник прорывается: ${c.name} (контроль ${Math.round(r.control)}%)`, 'warn');
+  },
+
+  /* ---------------- ЯДЕРНЫЙ УДАР ---------------- */
+  openNukePlanner(id) {
+    const c = Game.c(id);
+    const why = Game.canNuke(c);
+    if (why) return this.result(Game.fail(why));
+    const m = Game.mods, P = this.P();
+    const usa = Game.c('USA');
+    const Y = Game.powerOf(c);
+    const risk = usa && usa.ctrl === 'USA' && !usa.radioactive && c.id !== 'USA' && (c.faction === 'WEST' || usa.wars[Game.me]);
+    const html = `<div class="nk-head"><svg class="nk-tre"><use href="#i-nuke"/></svg><div><div class="mh-k">Стратегический ядерный удар</div><h2>${U.esc(c.name)}</h2></div></div>
+      <ul class="consequences">
+        <li class="neg">Все заводы цели уничтожены навсегда: ${c.factories} → 0.</li>
+        <li class="neg">${Y ? 'Войска противника на этом участке' : 'Дивизии противника'}: −${m.thermo ? 100 : 85}%${m.thermo ? ', соседи теряют 25%' : ''}.</li>
+        <li class="neg">Регион навсегда станет радиоактивной пустошью.</li>
+        <li class="neg">Мировая напряжённость +${c.faction === 'NEU' ? 35 : CFG.NUKE_TENSION}%.${!Game.atWar(c) ? ' Удар равносилен объявлению войны.' : ''}</li>
+        ${Y ? `<li class="neg">${U.esc(POWERS[Y].name)} — держава живого игрока. Если у неё есть ракеты, она может ответить тем же.</li>` : ''}
+        ${risk ? '<li class="neg">Высокий риск (60%) ответного ядерного удара США по нашей территории.</li>' : ''}
+        <li class="${Game.wastelands() + 1 >= CFG.NUCLEAR_WINTER ? 'neg' : ''}">Пустошей в мире: ${Game.wastelands()} → ${Game.wastelands() + 1} из ${CFG.NUCLEAR_WINTER}. При ${CFG.NUCLEAR_WINTER} наступит ядерная зима — конец игры для всех.</li>
+      </ul>
+      <div class="nk-arsenal">Боеголовок в арсенале: <b>${P.warheads}</b></div>
+      <div class="m-actions"><button class="btn" data-cancel>Отменить</button>
+        <button class="btn btn-nuke" data-hold><span class="hold-fill"></span><span class="hold-label"><svg><use href="#i-nuke"/></svg>Удерживайте для пуска</span></button></div>`;
+    this.openModal({
+      key: 'nuke', cls: 'm-nuke', html,
+      onOpen: (el, mm) => {
+        el.querySelector('[data-cancel]').onclick = () => this.closeModal(mm);
+        const btn = el.querySelector('[data-hold]');
+        let timer = null;
+        const start = e => {
+          e.preventDefault();
+          btn.classList.add('holding');
+          Sound.play('click');
+          timer = setTimeout(() => {
+            this.closeModal(mm);
+            Act.call('nuke', id).then(res => { if (!res.ok) this.result(res); });
+          }, 1300);
+        };
+        const stop = () => { btn.classList.remove('holding'); clearTimeout(timer); };
+        btn.addEventListener('mousedown', start);
+        btn.addEventListener('touchstart', start, { passive: false });
+        ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(ev => btn.addEventListener(ev, stop));
+        btn.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') start(e); });
+        btn.addEventListener('keyup', stop);
+      }
+    });
+  },
+
+  onNuke(r) {
+    const mine = r.by === Game.me;
+    this.fxBusyUntil = performance.now() + (mine ? 4600 : 3600);
+    MapView.fxNuke(r.targetId, POWERS[r.by].capitalPos);
+    Sound.play('launch');
+    setTimeout(() => { this.flash(mine || Game.c(r.targetId).ctrl === Game.me); Sound.play('nuke'); }, 1700);
+    if (mine) setTimeout(() => this.showNukeReport(r), 4200);
+    else this.toast(`ЯДЕРНЫЙ УДАР: ${POWERS[r.by].name} → ${r.name}`, 'warn');
+  },
+
+  onEnemyNuke(r) {
+    this.fxBusyUntil = performance.now() + 3600;
+    const from = Geo.meta[r.from] ? Geo.meta[r.from].centroid : { lat: 40, lng: -100 };
+    MapView.fxNuke(r.target, from);
+    Sound.play('launch');
+    setTimeout(() => { this.flash(r.power === Game.me); Sound.play('nuke'); }, 1700);
+  },
+
+  showNukeReport(r) {
+    const html = `<div class="nk-head"><svg class="nk-tre"><use href="#i-nuke"/></svg><div><div class="mh-k">Доклад ракетных войск · ${U.fmtDate(Game.S.date)}</div><h2>${U.esc(r.name)}: цель поражена</h2></div></div>
+      <div class="br-tiles">
+        <div class="tile neg"><span>Заводы</span><b>${r.before.factories} → 0</b><em>уничтожены навсегда</em></div>
+        <div class="tile pos"><span>Войска противника</span><b>${U.fmt(r.before.divs, 1)} → ${U.fmt(r.after.divs, 1)}</b><em>${r.thermo ? 'термоядерный удар' : 'атомный удар'}</em></div>
+        <div class="tile"><span>Контроль противника</span><b>${Math.round(r.before.control)}% → ${Math.round(r.after.control)}%</b></div>
+        <div class="tile neg"><span>Напряжённость</span><b>+${r.tension}%</b><em>сейчас ${U.fmt(Game.S.tension, 0)}%</em></div>
+        <div class="tile ${r.wastelands >= CFG.NUCLEAR_WINTER - 2 ? 'neg' : ''}"><span>Пустоши в мире</span><b>${r.wastelands} / ${CFG.NUCLEAR_WINTER}</b><em>порог ядерной зимы</em></div>
+        <div class="tile gold"><span>Итог</span><b>${r.capitulated ? 'Территория занята' : 'Фронт держится'}</b><em>${r.capitulated ? 'регион присоединён' : 'требуется наступление'}</em></div>
+      </div>
+      <div class="br-summary">${r.retaliation ? 'Радары фиксируют подъём стратегической авиации США. Ответный удар ожидается в ближайшие дни.' : 'Мир в ужасе следит за грибом над горизонтом. Новые союзники вряд ли появятся скоро.'}${r.reinforced >= 1 ? ` Союзники цели уже перебрасывают подкрепления: +${U.fmt(r.reinforced, 1)} див.` : ''}</div>
+      <div class="m-actions"><button class="btn btn-gold" data-ok>Принять доклад</button></div>`;
+    this.openModal({ key: 'nukereport', cls: 'm-nuke', html, onOpen: (el, m) => { el.querySelector('[data-ok]').onclick = () => this.closeModal(m); } });
+  },
+
+  /* ---------------- НАУКА И ФОКУСЫ ---------------- */
+  openResearch(tab) {
+    if (!this.started) return;
+    this.researchTab = tab;
+    if (this.isOpen('research')) { this.sig.research = null; this.renderResearch(); return; }
+    this.openModal({
+      key: 'research', cls: 'm-research', html: '<div class="rs"></div>',
+      onOpen: () => { this.sig.research = null; this.renderResearch(); }
+    });
+  },
+
+  renderResearch() {
+    const el = this.modalEl('research');
+    if (!el) return;
+    const P = this.P();
+    const sig = JSON.stringify([this.researchTab, P.techs, P.research.map(r => r.id), P.focuses, P.focus && P.focus.id,
+      TECHS.map(t => P.rp >= Game.techCost(t).rp), Game.mods.nucCost]);
+    if (sig === this.sig.research) return;
+    this.sig.research = sig;
+    const root = el.querySelector('.rs');
+    const tabs = `<div class="rs-tabs">
+      <button class="rs-tab ${this.researchTab === 'research' ? 'active' : ''}" data-tab="research"><svg><use href="#i-book"/></svg>Исследования</button>
+      <button class="rs-tab ${this.researchTab === 'focus' ? 'active' : ''}" data-tab="focus"><svg><use href="#i-tree"/></svg>Национальные фокусы</button></div>`;
+    root.innerHTML = tabs + (this.researchTab === 'research' ? this.techHTML() : this.focusHTML());
+    root.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { Sound.play('click'); this.researchTab = b.dataset.tab; this.sig.research = null; this.renderResearch(); });
+    if (this.researchTab === 'focus') this.drawFocusLines(root);
+    this.updateLive();
+  },
+
+  techHTML() {
+    const P = this.P();
+    const slots = [0, 1].map(i => {
+      const r = P.research[i];
+      if (!r) return `<div class="slot empty"><span>Отдел ${i + 1}</span><b>Свободен — выберите технологию</b></div>`;
+      const t = TECH_BY_ID[r.id];
+      return `<div class="slot"><span>Отдел ${i + 1}</span><b>${U.esc(Game.techName(t))}</b>
+        <div class="meter meter-cyan"><i data-live="prog" data-k="research" data-id="${r.id}" style="width:${(1 - r.daysLeft / r.total) * 100}%"></i></div>
+        <em data-live="days" data-k="research" data-id="${r.id}">${U.days(r.daysLeft)}</em></div>`;
+    }).join('');
+    let html = `<div class="rs-head"><div class="rs-rp"><svg><use href="#i-rp"/></svg><b>${U.fmt(Math.floor(P.rp))}</b><span>ОИ · ${U.signed(Game.dailyRP(), 1)} в день</span></div><div class="rs-slots">${slots}</div></div>`;
+    html += '<div class="rs-branches">';
+    for (const br of TECH_BRANCHES) {
+      html += `<div class="rs-col br-${br.id}"><div class="rs-col-head"><svg><use href="#${br.icon}"/></svg><div><b>${U.esc(Game.branchName(br))}</b><span>${br.desc}</span></div></div>`;
+      for (const t of TECHS.filter(x => x.branch === br.id)) {
+        const st = Game.techState(t), cost = Game.techCost(t), why = Game.canResearch(t);
+        const r = P.research.find(x => x.id === t.id);
+        html += `<div class="tech st-${st}">
+          <div class="tech-tier">${ROMAN[t.tier]}</div>
+          <div class="tech-main"><div class="tech-name">${U.esc(Game.techName(t))}</div><div class="tech-desc">${U.esc(t.desc)}</div>
+          ${st === 'active' ? `<div class="meter meter-cyan"><i data-live="prog" data-k="research" data-id="${t.id}" style="width:${(1 - r.daysLeft / r.total) * 100}%"></i></div>` : ''}
+          <div class="tech-foot"><span class="tech-cost"><svg><use href="#i-rp"/></svg>${cost.rp}</span><span class="tech-days">${U.days(cost.days)}</span>
+          ${st === 'done' ? '<span class="tech-done">Изучено</span>' : st === 'active' ? '<span class="tech-act">Исследуется</span>' :
+            `<button class="btn btn-xs ${why ? 'is-disabled' : 'btn-cyan'}" data-act="research" data-id="${t.id}" aria-disabled="${!!why}" ${why ? `data-why="${U.esc(why)}" data-tip="${U.esc(why)}"` : ''}>Исследовать</button>`}
+          </div></div></div>`;
+      }
+      html += '</div>';
+    }
+    return html + '</div>';
+  },
+
+  focusHTML() {
+    const P = this.P();
+    const cur = P.focus ? FOCUS_BY_ID[P.focus.id] : null;
+    let html = `<div class="rs-head"><div class="rs-rp"><svg><use href="#i-tree"/></svg><span>${cur ? `Выполняется: <b>${U.esc(Game.focusName(cur))}</b>` : 'Фокус не выбран — выберите доступный узел дерева'}</span></div>
+      <div class="rs-hint">Фокусы бесплатны, но выполняются по одному. Два курса в предпоследнем ряду взаимоисключающие.</div></div>`;
+    html += '<div class="ft-wrap"><div class="ft" id="focus-tree"><svg class="ft-lines"></svg>';
+    for (const f of FOCUSES) {
+      const st = Game.focusState(f), why = Game.canFocus(f);
+      html += `<div class="fnode st-${st}" style="--x:${f.x};--y:${f.y}" data-fid="${f.id}">
+        <div class="fnode-name">${U.esc(Game.focusName(f))}</div>
+        <div class="fnode-desc">${U.esc(f.desc)}</div>
+        ${st === 'active' ? `<div class="meter meter-gold"><i data-live="prog" data-k="focus" data-id="${f.id}" style="width:${(1 - P.focus.daysLeft / P.focus.total) * 100}%"></i></div><em class="fnode-days" data-live="days" data-k="focus" data-id="${f.id}">${U.days(P.focus.daysLeft)}</em>` :
+          st === 'done' ? '<em class="fnode-days done">Выполнен</em>' :
+          `<button class="btn btn-xs ${why ? 'is-disabled' : 'btn-gold'}" data-act="focus-start" data-id="${f.id}" aria-disabled="${!!why}" ${why ? `data-why="${U.esc(why)}" data-tip="${U.esc(why)}"` : ''}>${U.days(f.days)}</button>`}
+      </div>`;
+    }
+    html += '<div class="ft-excl" style="--x:2;--y:3"><span>⇋</span>взаимоисключающие</div></div></div>';
+    return html;
+  },
+
+  drawFocusLines(root) {
+    const tree = root.querySelector('#focus-tree');
+    const svg = tree.querySelector('.ft-lines');
+    const W = 176, H = 132, NW = 160, NH = 112;   // шаг сетки и размер узла — совпадают с CSS
+    const pos = f => ({ x: f.x * W + NW / 2, top: f.y * H, bottom: f.y * H + NH });
+    const P = this.P();
+    let d = '';
+    for (const f of FOCUSES) {
+      const parents = (f.reqAny || f.req || []).map(id => FOCUS_BY_ID[id]);
+      const c = pos(f);
+      for (const p of parents) {
+        const a = pos(p);
+        const midY = (a.bottom + c.top) / 2;
+        d += `<path class="${P.focuses.includes(p.id) ? 'done' : ''}" d="M${a.x},${a.bottom} V${midY} H${c.x} V${c.top}"/>`;
+      }
+    }
+    svg.innerHTML = d;
+  },
+
+  /* ---------------- МЕНЮ, СПРАВКА ---------------- */
+  openMenu() {
+    if (this.isOpen('menu') || !this.started) return;
+    let html = `<div class="mh"><svg><use href="#${this.D().emblem}"/></svg><div><div class="mh-k">Ставка верховного командования</div><h2>Меню</h2></div></div>
+      <div class="menu-list"><button class="btn btn-gold" data-m="resume">Вернуться к игре</button>`;
+    if (Net.mp) {
+      const room = Net.room;
+      html += `<div class="menu-room">Комната <b>${U.esc(room ? room.code : '—')}</b>${room ? room.players.map(p => `<span>${U.esc(p.name)} — ${p.power ? POWERS[p.power].name : '—'}${p.online ? '' : ' (не в сети)'}</span>`).join('') : ''}</div>`;
+    } else {
+      const man = Game.saveInfo(false), auto = Game.saveInfo(true);
+      const slot = (key, label, info, why) => `<button class="btn ${info ? '' : 'is-disabled'}" data-m="${key}" ${info ? '' : `aria-disabled="true" data-why="${why}"`}>${label}${info ? ` <small>(${U.fmtDate(info.date)})</small>` : ''}</button>`;
+      html += `<button class="btn" data-m="save">Сохранить игру</button>
+        ${slot('load', 'Загрузить сохранение', man, 'Ручных сохранений нет')}
+        ${slot('loadauto', 'Загрузить автосохранение', auto, 'Автосохранений пока нет — они делаются каждые 30 дней')}`;
+    }
+    html += `<button class="btn" data-m="help">Как играть</button>
+        <button class="btn" data-m="sound">Звук: ${Sound.enabled ? 'включён' : 'выключен'}</button>
+        <button class="btn" data-m="map">Карта: ${MapView.mode === 'globe' ? '3D-глобус' : '2D-проекция'}</button>
+        <button class="btn btn-red" data-m="new">${Net.mp ? 'Покинуть сетевую игру' : 'Новая игра'}</button>
+      </div>`;
+    this.openModal({
+      key: 'menu', cls: 'm-small', html,
+      onOpen: (el, m) => {
+        el.querySelectorAll('[data-m]').forEach(b => b.addEventListener('click', () => {
+          if (b.getAttribute('aria-disabled') === 'true') return;
+          const k = b.dataset.m;
+          if (k === 'resume') return this.closeModal(m);
+          if (k === 'save') { Game.save(); return this.closeModal(m); }
+          if (k === 'load') { this.closeModal(m); return this.loadGame(false); }
+          if (k === 'loadauto') { this.closeModal(m); return this.loadGame(true); }
+          if (k === 'help') return this.openHelp();
+          if (k === 'sound') { Sound.toggle(); b.textContent = 'Звук: ' + (Sound.enabled ? 'включён' : 'выключен'); return; }
+          if (k === 'map') { this.toggleMapMode(); b.textContent = 'Карта: ' + (MapView.mode === 'globe' ? '3D-глобус' : '2D-проекция'); return; }
+          if (k === 'new') {
+            this.closeModal(m);
+            if (Net.mp) { Net.send('leave'); Net.disconnect(); this.started = false; }
+            return this.showIntro();
+          }
+        }));
+      }
+    });
+  },
+
+  loadGame(auto) {
+    this.closeAll();
+    this.eventQueue = [];
+    if (Game.load(auto)) { this.started = true; this.toast('Сохранение загружено', 'ok'); MapView.focus(this.D().capital); }
+    else this.toast('Не удалось загрузить сохранение', 'err');
+  },
+
+  toggleMapMode() {
+    const want = MapView.mode === 'globe' ? 'flat' : 'globe';
+    if (want === 'globe' && !MapView.canGlobe()) return this.toast('3D-глобус недоступен: браузер не поддерживает WebGL', 'err');
+    const mode = MapView.setMode(want);
+    MapView.setSelected(this.selected);
+    const b = this.el.mapMode;
+    b.querySelector('span').textContent = mode === 'globe' ? '2D-карта' : '3D-глобус';
+    U.storage.set('meridian_map_mode', mode);
+  },
+
+  openHelp() {
+    const html = `<div class="mh"><svg><use href="#i-book"/></svg><div><div class="mh-k">Наставление для лидера державы</div><h2>Как играть</h2></div></div>
+      <div class="help">
+        <section><h3>Цель</h3><p><b>Победа</b>: 55% мировой промышленности или захват столиц обеих соперничающих держав. В сетевой игре — ещё и если все соперники-люди капитулировали. <b>Поражение</b>: потеря своей столицы или ядерная зима — 7 радиоактивных пустошей на планете.</p></section>
+        <section><h3>Время</h3><p>1 игровой день = 1 секунда на скорости 1. <kbd>Пробел</kbd> — пауза, <kbd>+</kbd>/<kbd>−</kbd> или <kbd>1</kbd>–<kbd>4</kbd> — скорость. В сетевой игре время общее: пауза и скорость меняются у всех.</p></section>
+        <section><h3>Ресурсы</h3><p><b>ПВ</b> — политвласть для любых решений. <b>Заводы</b> дают очки исследований (ОИ). <b>Призывники</b> нужны для новых дивизий. <b>Напряжённость</b> общая для мира: выше 50% блоки мобилизуются, выше 75–80% сами вступают в войну.</p></section>
+        <section><h3>Война</h3><p>Кликните по стране → «Обосновать войну» → дождитесь окончания → «Объявить войну». Территория станет оранжевым фронтом. «Спланировать наступление» покажет шанс победы: сила атаки против обороны плюс бросок 2d6 с каждой стороны. Через пролив атака слабее на 20%, десантом — на 45%. Сверхдержавы обладают <b>стойкостью</b>: их фронт рушится медленнее.</p></section>
+        <section><h3>Против человека</h3><p>Армия державы-игрока защищает все её враждебные границы сразу: чем больше у соперника фронтов, тем слабее каждый участок. Мир между людьми заключается только по согласию обоих.</p></section>
+        <section><h3>Разведка</h3><p>Без разведданных численность врага видна как диапазон. «Сбор разведданных» уточняет цифры, «Саботаж» снижает оборону до −60%, «Диверсия» уничтожает заводы. Провалы повышают напряжённость.</p></section>
+        <section><h3>Наука и фокусы</h3><p><kbd>R</kbd> — исследования (2 отдела одновременно), <kbd>F</kbd> — национальные фокусы. Ядерная ветка до 4-го уровня открывает ядерный удар: регион навсегда превращается в пустошь без заводов.</p></section>
+        <section><h3>Управление</h3><p>Мышь: вращение глобуса, колесо — масштаб. <kbd>M</kbd> — 3D-глобус / 2D-карта. <kbd>Esc</kbd> — закрыть окно / меню. Одиночная игра сохраняется автоматически каждые 30 дней.</p></section>
+      </div>
+      <div class="m-actions"><button class="btn btn-gold" data-ok>Понятно</button></div>`;
+    this.openModal({ key: 'help', cls: 'm-help', html, onOpen: (el, m) => { el.querySelector('[data-ok]').onclick = () => this.closeModal(m); } });
+  },
+
+  /* ---------------- ВСТУПЛЕНИЕ И ЛОББИ ---------------- */
+  powerCards(selected, taken = {}, attr = 'data-power') {
+    return POWER_TAGS.map(tag => {
+      const d = POWERS[tag], by = taken[tag];
+      return `<button class="pw ${tag === selected ? 'active' : ''} ${by ? 'taken' : ''}" ${attr}="${tag}" style="--pc:${d.color}" ${by ? 'aria-disabled="true"' : ''}>
+        <svg class="pw-emb"><use href="#${d.emblem}"/></svg>
+        <b>${d.name}</b><span>${d.title} ${d.leader}</span>
+        <em>${by ? 'Занято: ' + U.esc(by) : `Стартовые заводы: ${d.start.reduce((s, id) => s + ((COUNTRY_OVERRIDES[id] || {}).fac || 0), 0)}`}</em>
+      </button>`;
+    }).join('');
+  },
+
+  showIntro() {
+    this.closeAll();
+    this.eventQueue = [];
+    this.started = false;
+    const info = Game.latestSave();
+    let diff = 'normal', power = 'SOV', tab = 'solo';
+    const html = `<div class="intro">
+      <div class="intro-hero">
+        <svg class="intro-emblem"><use href="#i-star-emblem"/></svg>
+        <div class="intro-k">Холодная война · альтернативная история</div>
+        <h1>КРАСНЫЙ МЕРИДИАН</h1>
+        <p>5 марта 1953 года. После смерти Сталина Президиум ЦК неожиданно избирает Генеральным секретарём <b>Аркадия Громова</b>. Мир расколот натрое: <span class="c-west">Западный блок</span> во главе с США, уцелевший после сепаратного мира 1945-го <span class="c-axis">Германский Рейх</span> с его Пактом Оси — и <span class="c-sov">Советский Союз</span> с союзниками по Коминтерну.</p>
+      </div>
+      <div class="intro-tabs"><button class="rs-tab active" data-tab="solo">Одиночная игра</button><button class="rs-tab" data-tab="net">Сетевая игра</button></div>
+      <div class="intro-pane" data-pane="solo">
+        <div class="intro-label">Держава</div>
+        <div class="pw-grid" data-group="solo-power">${this.powerCards(power)}</div>
+        <div class="intro-label">Сложность</div>
+        <div class="intro-diff">${Object.entries(DIFFICULTY).map(([k, d]) => `<button class="diff ${k === diff ? 'active' : ''}" data-diff="${k}"><b>${d.name}</b><span>${d.desc}</span></button>`).join('')}</div>
+        <div class="m-actions">
+          <button class="btn" data-help>Как играть</button>
+          ${info ? `<button class="btn" data-continue>Продолжить кампанию <small>(${U.fmtDate(info.date)})</small></button>` : ''}
+          <button class="btn btn-red btn-lg" data-start><svg><use href="#i-pp"/></svg>Начать</button>
+        </div>
+      </div>
+      <div class="intro-pane hidden" data-pane="net">
+        <div class="net-form">
+          <label>Ваше имя<input id="net-name" maxlength="20" value="${U.esc(Net.myName())}"></label>
+          <label>Адрес сервера<input id="net-url" placeholder="например, red-meridian.onrender.com" value="${U.esc(Net.defaultUrl())}"></label>
+        </div>
+        <div class="net-actions">
+          <button class="btn btn-red" data-create>Создать комнату</button>
+          <span class="net-or">или</span>
+          <input id="net-code" class="code-input" maxlength="4" placeholder="КОД">
+          <button class="btn btn-gold" data-join>Войти по коду</button>
+        </div>
+        <div class="net-hint">Создайте комнату и отправьте другу четырёхбуквенный код. Если сервер долго «просыпается» (бесплатный хостинг засыпает без игроков), подождите до минуты.</div>
+        <div class="lobby hidden" id="lobby"></div>
+      </div>
+    </div>`;
+    this.openModal({
+      key: 'intro', cls: 'm-intro', html, dismissible: false, pause: false,
+      onOpen: (el) => {
+        el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => {
+          tab = b.dataset.tab;
+          el.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('active', x === b));
+          el.querySelectorAll('[data-pane]').forEach(p => p.classList.toggle('hidden', p.dataset.pane !== tab));
+          Sound.play('click');
+        });
+        el.querySelector('[data-group="solo-power"]').addEventListener('click', e => {
+          const b = e.target.closest('[data-power]');
+          if (!b) return;
+          power = b.dataset.power;
+          el.querySelectorAll('[data-group="solo-power"] [data-power]').forEach(x => x.classList.toggle('active', x === b));
+          Sound.play('click');
+        });
+        el.querySelectorAll('[data-diff]').forEach(b => b.onclick = () => {
+          diff = b.dataset.diff;
+          el.querySelectorAll('[data-diff]').forEach(x => x.classList.toggle('active', x === b));
+          Sound.play('click');
+        });
+        el.querySelector('[data-help]').onclick = () => { Sound.play('click'); this.openHelp(); };
+        const cont = el.querySelector('[data-continue]');
+        if (cont) cont.onclick = () => { Sound.play('ok'); this.loadGame(); };
+        el.querySelector('[data-start]').onclick = () => {
+          Sound.play('ok');
+          this.closeAll();
+          Net.mp = false;
+          Game.me = power;
+          Game.cur = power;
+          this.started = true;
+          Game.newGame(diff, [power]);
+          MapView.focus(POWERS[power].capital);
+          setTimeout(() => this.toast('Время на паузе. Нажмите ▶ или Пробел, чтобы начать. Кликните по стране, чтобы открыть её панель.', 'info'), 400);
+        };
+        // Сетевая игра
+        const conn = async () => {
+          const name = el.querySelector('#net-name').value.trim() || 'Игрок';
+          U.storage.set('meridian_name', name);
+          const url = el.querySelector('#net-url').value.trim();
+          if (!url) { this.toast('Укажите адрес сервера', 'err'); return null; }
+          if (Net.ws) return name;
+          this.toast('Подключаемся к серверу…', 'info');
+          try { await Net.connect(url); } catch (e) { this.toast(e.message, 'err'); return null; }
+          return name;
+        };
+        el.querySelector('[data-create]').onclick = async () => {
+          const name = await conn();
+          if (!name) return;
+          const res = await Net.request('create', { name, difficulty: 'normal' });
+          if (!res.ok) this.toast(res.msg, 'err');
+        };
+        const codeInput = el.querySelector('#net-code');
+        codeInput.addEventListener('input', () => { codeInput.value = codeInput.value.toUpperCase().replace(/[^A-ZА-Я]/g, ''); });
+        el.querySelector('[data-join]').onclick = async () => {
+          const code = codeInput.value.trim();
+          if (code.length !== 4) { this.toast('Код комнаты — 4 буквы', 'err'); return; }
+          const name = await conn();
+          if (!name) return;
+          const res = await Net.request('join', { code, name });
+          if (!res.ok) this.toast(res.msg, 'err');
+        };
+      }
+    });
+  },
+
+  closeIntro() {
+    this.closeAll();
+    this.started = true;
+    MapView.focus(this.D().capital);
+  },
+
+  renderLobby(room) {
+    const el = this.modalEl('intro');
+    if (!el || !room) return;
+    const box = el.querySelector('#lobby');
+    box.classList.remove('hidden');
+    el.querySelector('.net-actions').classList.add('hidden');
+    el.querySelector('.net-form').classList.add('hidden');
+    el.querySelector('.net-hint').classList.add('hidden');
+    const me = room.players.find(p => p.clientId === Net.clientId);
+    const host = room.host === Net.clientId;
+    const taken = {};
+    room.players.forEach(p => { if (p.power && p.clientId !== Net.clientId) taken[p.power] = p.name; });
+    const ready = room.players.every(p => p.power) && room.players.length >= 1;
+    box.innerHTML = `
+      <div class="lobby-code">Код комнаты <b>${U.esc(room.code)}</b><button class="btn btn-xs" data-copy>Скопировать</button></div>
+      <div class="lobby-players">${room.players.map(p => `<div class="lp ${p.online ? '' : 'off'}"><i style="background:${p.power ? POWERS[p.power].color : '#555'}"></i>
+        <b>${U.esc(p.name)}</b>${p.clientId === room.host ? '<em>хост</em>' : ''}<span>${p.power ? POWERS[p.power].name : 'выбирает державу…'}</span></div>`).join('')}</div>
+      <div class="intro-label">Ваша держава</div>
+      <div class="pw-grid" data-group="net-power">${this.powerCards(me && me.power, taken)}</div>
+      <div class="intro-label">Сложность (ИИ-стран)</div>
+      <div class="intro-diff">${Object.entries(DIFFICULTY).map(([k, d]) => `<button class="diff ${k === room.difficulty ? 'active' : ''} ${host ? '' : 'is-locked'}" data-ndiff="${k}"><b>${d.name}</b><span>${d.desc}</span></button>`).join('')}</div>
+      <div class="m-actions">
+        <button class="btn" data-leave>Выйти из комнаты</button>
+        ${host ? `<button class="btn btn-red btn-lg ${ready ? '' : 'is-disabled'}" data-go ${ready ? '' : 'aria-disabled="true" data-why="Все игроки должны выбрать державу"'}><svg><use href="#i-pp"/></svg>Начать игру</button>`
+          : '<span class="net-wait">Ждём, когда хост начнёт игру…</span>'}
+      </div>`;
+    box.querySelector('[data-copy]').onclick = () => {
+      try { navigator.clipboard.writeText(room.code); this.toast('Код скопирован', 'ok'); } catch (e) { this.toast('Код: ' + room.code, 'info'); }
+    };
+    box.querySelector('[data-group="net-power"]').addEventListener('click', async e => {
+      const b = e.target.closest('[data-power]');
+      if (!b || b.getAttribute('aria-disabled') === 'true') return;
+      Sound.play('click');
+      const res = await Net.request('pick', { power: b.dataset.power });
+      if (!res.ok) this.toast(res.msg, 'err');
+    });
+    box.querySelectorAll('[data-ndiff]').forEach(b => b.onclick = async () => {
+      if (!host) return this.toast('Сложность выбирает хост', 'info');
+      const res = await Net.request('difficulty', { difficulty: b.dataset.ndiff });
+      if (!res.ok) this.toast(res.msg, 'err');
+    });
+    box.querySelector('[data-leave]').onclick = () => { Net.send('leave'); Net.disconnect(); this.showIntro(); };
+    const go = box.querySelector('[data-go]');
+    if (go) go.onclick = async () => {
+      if (go.getAttribute('aria-disabled') === 'true') return;
+      const res = await Net.request('start', {});
+      if (!res.ok) this.toast(res.msg, 'err');
+    };
+  },
+
+  /* ---------------- КОНЕЦ ИГРЫ ---------------- */
+  showGameOver(o) {
+    if (this.isOpen('gameover') || !this.started) return;
+    const S = Game.S, st = this.P().stats, me = Game.me;
+    const win = o.type === 'victory' && o.winner === me;
+    const wName = o.winner ? POWERS[o.winner].name : '';
+    const texts = {
+      capital: ['Поражение', 'Столица пала', 'Вражеские танки на главной площади. Правительство эвакуировано, но война проиграна.'],
+      winter: ['Поражение', 'Ядерная зима', 'Пепел сотен городов закрыл солнце. Победителей в этой войне нет — только выжившие.'],
+      industry: win ? ['Победа', 'Мировая гегемония', 'Больше половины промышленности планеты работает на нашу экономику.'] : ['Поражение', 'Гегемония соперника', `${wName} контролирует больше половины мировой промышленности.`],
+      rivals: win ? ['Победа', 'Крах соперников', 'Столицы обоих соперников пали. Над ними — наши знамёна.'] : ['Поражение', 'Крах соперников', `${wName} захватила столицы соперников.`],
+      lastStanding: win ? ['Победа', 'Последняя держава', 'Все соперники-люди капитулировали. Мир принадлежит нам.'] : ['Поражение', 'Держава повержена', `${wName} остаётся единственной великой державой.`]
+    };
+    const [k, title, text] = texts[o.reason] || texts.capital;
+    Sound.play(win ? 'victory' : 'defeat');
+    const html = `<div class="go ${win ? 'win' : 'lose'}">
+      <div class="mh-k">${k} · ${U.fmtDate(S.date)}</div><h1>${title}</h1><p>${text}</p>
+      <div class="br-tiles">
+        <div class="tile"><span>Лет у власти</span><b>${U.fmt(S.day / 365, 1)}</b></div>
+        <div class="tile gold"><span>Доля промышленности</span><b>${U.pct(Game.industryShare())}</b></div>
+        <div class="tile pos"><span>Побед / поражений</span><b>${st.won} / ${st.lost}</b></div>
+        <div class="tile"><span>Присоединено территорий</span><b>${st.annexed}</b></div>
+        <div class="tile neg"><span>Ядерных ударов</span><b>${st.nukes}</b></div>
+        <div class="tile"><span>Тайных операций</span><b>${st.spyOk} / ${st.spyOk + st.spyFail}</b></div>
+      </div>
+      <div class="m-actions">
+        ${!Net.mp && Game.hasSave() ? '<button class="btn" data-load>Загрузить сохранение</button>' : ''}
+        <button class="btn ${win ? '' : 'btn-red'}" data-new>${Net.mp ? 'В главное меню' : 'Новая игра'}</button>
+        ${win && !Net.mp ? '<button class="btn btn-gold" data-cont>Продолжить править</button>' : ''}
+      </div></div>`;
+    this.openModal({
+      key: 'gameover', cls: 'm-gameover', html, dismissible: false, pause: false,
+      onOpen: (el, m) => {
+        const q = s => el.querySelector(s);
+        if (q('[data-load]')) q('[data-load]').onclick = () => { this.closeModal(m); this.loadGame(); };
+        q('[data-new]').onclick = () => {
+          this.closeModal(m);
+          if (Net.mp) { Net.send('leave'); Net.disconnect(); }
+          this.showIntro();
+        };
+        if (q('[data-cont]')) q('[data-cont]').onclick = () => { Game.continueAfterVictory(); this.closeModal(m); this.updateClock(); };
+      }
+    });
+  }
+};

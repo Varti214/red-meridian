@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Красный меридиан — Холодная война</title>
+<meta name="description" content="Браузерная гранд-стратегия в духе Hearts of Iron IV: альтернативная Холодная война, СССР под руководством Аркадия Громова.">
+<link rel="stylesheet" href="css/style.css?v=15">
+</head>
+<body>
+
+<!-- Библиотека иконок: все иконки нарисованы прямо здесь, без внешних картинок -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-pp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17l-6.1 3.4 1.5-6.8L2.2 9l6.9-.7z"/></symbol>
+    <symbol id="i-factory" viewBox="0 0 24 24"><path fill="currentColor" d="M2 21h20V3h-4v9l-5-3.5V12L8 8.5V12L2 8z"/><path fill="#0b1118" d="M6 15h2v2H6zm5 0h2v2h-2zm5 0h2v2h-2z"/></symbol>
+    <symbol id="i-mp" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3C7.6 3 5 6.2 5 9.6V11h14V9.6C19 6.2 16.4 3 12 3zM3 12h18v2H3zm4 3.2c.7 2.8 2.6 4.8 5 4.8s4.3-2 5-4.8z"/></symbol>
+    <symbol id="i-div" viewBox="0 0 24 24"><path fill="currentColor" d="M3 15.5h18l-2.2 4H5.2zM6.5 10.5h9l2 4h-13zM10 8h11v1.6H10z"/></symbol>
+    <symbol id="i-rp" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="12" rx="10" ry="4"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/></g><circle cx="12" cy="12" r="2" fill="currentColor"/></symbol>
+    <symbol id="i-tension" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2L1 21h22zm-1 7h2v6h-2zm0 8h2v2h-2z" fill-rule="evenodd"/></symbol>
+    <symbol id="i-nuke" viewBox="0 0 24 24"><path fill="currentColor" d="M7 3.34A10 10 0 0 1 17 3.34L13.6 9.23A3.2 3.2 0 0 0 10.4 9.23Z M22 12A10 10 0 0 1 17 20.66L13.6 14.77A3.2 3.2 0 0 0 15.2 12Z M7 20.66A10 10 0 0 1 2 12L8.8 12A3.2 3.2 0 0 0 10.4 14.77Z"/><circle cx="12" cy="12" r="2" fill="currentColor"/></symbol>
+    <symbol id="i-swords" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l11 11M20 4L9 15M13 17l4-4M11 17l-4-4M6 18l-2 2M18 18l2 2"/></g></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path fill="currentColor" d="M12 5C6 5 2 12 2 12s4 7 10 7 10-7 10-7-4-7-10-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l8 3v6c0 5-3.4 9.3-8 11-4.6-1.7-8-6-8-11V5z"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path fill="currentColor" d="M5 2h2v20H5zm3 1h11l-3 4 3 4H8z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path fill="currentColor" d="M9 2h6v2h-1v5.2l5.6 9.6A2 2 0 0 1 17.9 22H6.1a2 2 0 0 1-1.7-3.2L10 9.2V4H9z"/></symbol>
+    <symbol id="i-tree" viewBox="0 0 24 24"><path fill="currentColor" d="M9 2h6v5H9zM3 15h6v5H3zm12 0h6v5h-6zM11 7h2v3h6v5h-2v-3H7v3H5v-5h6z"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path fill="currentColor" d="M3 5h18v2.5H3zm0 5.75h18v2.5H3zM3 16.5h18V19H3z"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M6 4h4v16H6zm8 0h4v16h-4z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4l13 8-13 8z"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path fill="currentColor" d="M5 11h14v2.4H5z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path fill="currentColor" d="M10.8 5h2.4v5.8H19v2.4h-5.8V19h-2.4v-5.8H5v-2.4h5.8z"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9.5"/><ellipse cx="12" cy="12" rx="4.2" ry="9.5"/><path d="M2.5 12h19M4 7h16M4 17h16"/></g></symbol>
+    <symbol id="i-sound" viewBox="0 0 24 24"><path fill="currentColor" d="M3 9h4l5-4v14l-5-4H3z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-star-emblem" viewBox="0 0 64 64"><path fill="#e8343a" stroke="#f5c74e" stroke-width="2.2" stroke-linejoin="round" d="M32 4l7.8 17.2 18.8 2-14 12.6 4 18.5L32 44.8 15.4 54.3l4-18.5-14-12.6 18.8-2z"/><text x="32" y="40.5" text-anchor="middle" font-size="21" font-family="'Segoe UI Symbol','Noto Sans Symbols','DejaVu Sans',sans-serif" fill="#f5c74e">&#9773;</text></symbol>
+    <symbol id="i-emblem-west" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#1747c9" stroke="#dfe8ff" stroke-width="2.5"/><circle cx="32" cy="32" r="21" fill="none" stroke="#dfe8ff" stroke-width="1.2" opacity=".6"/><path fill="#ffffff" d="M32 12l5.2 11.4 12.5 1.3-9.3 8.4 2.7 12.3L32 39.1l-11.1 6.3 2.7-12.3-9.3-8.4 12.5-1.3z"/><path fill="#d6313b" d="M18 49h28v3H18zm3 4h22v2.5H21z"/></symbol>
+    <symbol id="i-emblem-axis" viewBox="0 0 64 64"><path fill="#2a2d33" stroke="#c9ced6" stroke-width="2.2" d="M32 5l22 8v17c0 14-9.6 25-22 30C19.6 55 10 44 10 30V13z"/><path fill="#e6e9ee" d="M27 15h10v12h12v10H37v12H27V37H15V27h12z"/><path fill="#2a2d33" d="M29.5 17.5h5v12h12v5h-12v12h-5v-12h-12v-5h12z"/></symbol>
+  </defs>
+</svg>
+
+<div id="app">
+  <div id="map-root" aria-label="Карта мира"></div>
+  <div id="map-grid" aria-hidden="true"></div>
+  <div id="vignette" aria-hidden="true"></div>
+
+  <!-- ВЕРХНЯЯ ПАНЕЛЬ РЕСУРСОВ -->
+  <header id="topbar" class="hidden-ui">
+    <div class="tb-nation" id="tb-nation">
+      <svg class="emblem"><use href="#i-star-emblem"/></svg>
+      <div class="leader-portrait" aria-hidden="true">АГ</div>
+      <div class="tb-nation-text">
+        <div class="tb-nation-name">СССР</div>
+        <div class="tb-leader">Генсек А. Громов</div>
+      </div>
+    </div>
+    <div class="tb-resources">
+      <div class="res" id="res-pp"><svg class="ico c-gold"><use href="#i-pp"/></svg><div class="res-body"><span class="res-val">0</span><span class="res-delta">+0</span></div><span class="res-lbl">ПВ</span></div>
+      <div class="res" id="res-fac"><svg class="ico c-steel"><use href="#i-factory"/></svg><div class="res-body"><span class="res-val">0</span><span class="res-delta"></span></div><span class="res-lbl">Заводы</span></div>
+      <div class="res" id="res-mp"><svg class="ico c-green"><use href="#i-mp"/></svg><div class="res-body"><span class="res-val">0</span><span class="res-delta">+0</span></div><span class="res-lbl">Призывники</span></div>
+      <div class="res" id="res-div"><svg class="ico c-red"><use href="#i-div"/></svg><div class="res-body"><span class="res-val">0</span><span class="res-org"><i></i></span></div><span class="res-lbl">Дивизии</span></div>
+      <div class="res" id="res-rp"><svg class="ico c-cyan"><use href="#i-rp"/></svg><div class="res-body"><span class="res-val">0</span><span class="res-delta">+0</span></div><span class="res-lbl">ОИ</span></div>
+      <div class="res hidden" id="res-nuke"><svg class="ico c-yellow"><use href="#i-nuke"/></svg><div class="res-body"><span class="res-val">0</span><span class="res-delta"></span></div><span class="res-lbl">Боеголовки</span></div>
+      <div class="res res-tension" id="res-tension">
+        <svg class="ico"><use href="#i-tension"/></svg>
+        <div class="tension-wrap">
+          <div class="tension-top"><span class="res-lbl">Мировая напряжённость</span><span class="res-val">0%</span></div>
+          <div class="tension-bar"><i></i><b class="tension-mark" style="left:50%"></b></div>
+        </div>
+      </div>
+    </div>
+    <div class="tb-right">
+      <button class="tb-btn" data-ui="research" title="Исследования (R)"><svg><use href="#i-book"/></svg><span>Наука</span><em class="tb-badge hidden" id="badge-research"></em></button>
+      <button class="tb-btn" data-ui="focus" title="Национальные фокусы (F)"><svg><use href="#i-tree"/></svg><span>Фокусы</span><em class="tb-badge hidden" id="badge-focus"></em></button>
+      <div class="tb-clock">
+        <div class="tb-date" id="tb-date">5 марта 1953</div>
+        <div class="tb-speed">
+          <button class="spd-btn" data-ui="toggle-pause" id="btn-pause" title="Пауза / продолжить (Пробел)"><svg><use href="#i-play"/></svg></button>
+          <button class="spd-btn" data-ui="speed-down" title="Медленнее (−)"><svg><use href="#i-minus"/></svg></button>
+          <div class="spd-pips" id="spd-pips"><i></i><i></i><i></i><i></i></div>
+          <button class="spd-btn" data-ui="speed-up" title="Быстрее (+)"><svg><use href="#i-plus"/></svg></button>
+        </div>
+        <div class="day-progress"><i id="day-progress"></i></div>
+      </div>
+      <div class="tb-net hidden" id="net-status"><i></i><span>Сеть</span></div>
+      <button class="tb-btn tb-icon" data-ui="menu" title="Меню (Esc)"><svg><use href="#i-menu"/></svg></button>
+    </div>
+  </header>
+
+  <!-- ЛЕГЕНДА КАРТЫ -->
+  <div id="legend" class="glass hidden-ui">
+    <div class="lg-title">Легенда</div>
+    <div class="lg-row"><i style="--c:var(--f-sov)"></i>СССР</div>
+    <div class="lg-row"><i style="--c:var(--f-com)"></i>Коминтерн</div>
+    <div class="lg-row"><i style="--c:var(--f-west)"></i>Западный блок</div>
+    <div class="lg-row"><i style="--c:var(--f-axis)"></i>Пакт Оси</div>
+    <div class="lg-row"><i style="--c:var(--f-neu)"></i>Неприсоединившиеся</div>
+    <div class="lg-row"><i style="--c:var(--front)"></i>Активный фронт</div>
+    <div class="lg-row"><i style="--c:var(--waste)"></i>Радиоактивная пустошь</div>
+    <div class="lg-mode">
+      <button class="btn btn-xs" data-ui="map-mode" id="btn-map-mode"><svg><use href="#i-globe"/></svg><span>2D-карта</span></button>
+    </div>
+  </div>
+
+  <!-- ПАНЕЛЬ СТРАНЫ (слева) -->
+  <aside id="country-panel" class="glass panel-slide hidden-ui" aria-live="polite"></aside>
+
+  <!-- ЖУРНАЛ ВЕРХОВНОГО КОМАНДОВАНИЯ (справа) -->
+  <aside id="log-panel" class="glass hidden-ui">
+    <div class="lp-head">
+      <div class="lp-title"><span class="dot-live"></span>Журнал Верховного командования</div>
+      <button class="icon-btn" data-ui="log-collapse" title="Свернуть журнал"><svg><use href="#i-chevron"/></svg></button>
+    </div>
+    <div class="lp-filters" id="log-filters">
+      <button class="chip active" data-filter="all">Все</button>
+      <button class="chip" data-filter="mil">Фронт</button>
+      <button class="chip" data-filter="intel">Разведка</button>
+      <button class="chip" data-filter="dip">Дипломатия</button>
+      <button class="chip" data-filter="sci">Наука</button>
+      <button class="chip" data-filter="alert">Тревоги</button>
+    </div>
+    <div class="lp-list" id="log-list"></div>
+  </aside>
+  <button id="log-reopen" class="glass hidden" data-ui="log-collapse" title="Открыть журнал"><svg><use href="#i-chevron"/></svg><span>Журнал</span><em id="log-unread" class="hidden">0</em></button>
+
+  <!-- НИЖНЯЯ ПАНЕЛЬ: АРМИЯ И ФРОНТЫ -->
+  <section id="dock" class="hidden-ui">
+    <div id="army-box" class="glass"></div>
+    <div id="fronts-box" class="glass"></div>
+  </section>
+
+  <div id="tooltip" role="tooltip"></div>
+  <div id="toasts" aria-live="polite"></div>
+  <div id="modal-root"></div>
+  <div id="flash" aria-hidden="true"></div>
+
+  <!-- ЭКРАН ЗАГРУЗКИ -->
+  <div id="loading">
+    <div class="ld-inner">
+      <svg class="ld-emblem"><use href="#i-star-emblem"/></svg>
+      <div class="ld-title">КРАСНЫЙ МЕРИДИАН</div>
+      <div class="ld-sub">Холодная война · альтернативная история</div>
+      <div class="ld-bar"><i id="ld-bar"></i></div>
+      <div class="ld-step" id="ld-step">Подготовка штаба…</div>
+    </div>
+  </div>
+</div>
+
+<!-- 3D-движок: Three.js + globe.gl одним локальным файлом (без интернета) -->
+<script src="vendor/globe-bundle.min.js?v=15" onerror="window.__vendorFailed=true"></script>
+<!-- Границы стран: Natural Earth 1:110m -->
+<script src="data/countries.js?v=15" onerror="window.__geoFailed=true"></script>
+<script src="js/util.js?v=15"></script>
+<script src="js/data.js?v=15"></script>
+<script src="js/geo.js?v=15"></script>
+<script src="js/combat.js?v=15"></script>
+<script src="js/ai.js?v=15"></script>
+<script src="js/game.js?v=15"></script>
+<script src="js/net.js?v=15"></script>
+<script src="js/audio.js?v=15"></script>
+<script src="js/map.js?v=15"></script>
+<script src="js/ui.js?v=15"></script>
+<script src="js/main.js?v=15"></script>
+</body>
+</html>
