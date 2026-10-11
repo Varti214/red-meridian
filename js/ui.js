@@ -236,6 +236,7 @@ const UI = {
       return;
     }
     if (this.modals.length || !this.started) return;
+    if (e.code === 'Backquote' || ['`', '~', 'ё', 'Ё'].includes(e.key)) { e.preventDefault(); this.openConsole(); return; }
     if (e.code === 'Space') { e.preventDefault(); this.togglePause(); }
     else if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') this.setSpeed(Game.S.speed + 1);
     else if (e.key === '-' || e.code === 'NumpadSubtract') this.setSpeed(Game.S.speed - 1);
@@ -1973,6 +1974,44 @@ const UI = {
     MapView.refresh(true);
   },
 
+
+  /* ---------------- КОНСОЛЬ (клавиша Ё / `) ----------------
+     Видна только на этом экране. Команды сверяются по хешу. */
+  openConsole() {
+    if (document.getElementById('cmd-line')) return;
+    const box = document.createElement('div');
+    box.id = 'cmd-line';
+    box.innerHTML = '<span>&gt;</span><input maxlength="40" autocomplete="off" spellcheck="false">';
+    document.body.appendChild(box);
+    const inp = box.querySelector('input');
+    const close = () => box.remove();
+    inp.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+      if (e.key === 'Enter') { const v = inp.value; close(); this.runCommand(v); }
+    });
+    inp.addEventListener('blur', close);
+    inp.focus();
+  },
+  // Русская раскладка → латинская по тем же клавишам (можно не переключать язык)
+  cmdHash(str) {
+    const ru = 'йцукенгшщзхъфывапролджэячсмитьбю', en = "qwertyuiop[]asdfghjkl;'zxcvbnm,.";
+    const s = String(str).trim().toLowerCase().split('').map(ch => { const i = ru.indexOf(ch); return i >= 0 ? en[i] : ch; }).join('');
+    let h = 5381;
+    for (const ch of s) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+    return h;
+  },
+  runCommand(v) {
+    if (!Game.S || !v.trim()) return;
+    if (this.cmdHash(v) === 3059383213) {
+      Act.call('setAssist').then(res => {
+        if (!res || !res.ok) return this.toast((res && res.msg) || 'Не получилось', 'err');
+        this.assist = res.on;
+        document.body.classList.toggle('assist-on', res.on);
+        this.toast(res.on ? 'ИИ принял командование державой' : 'Командование возвращено вам', 'ok');
+      });
+    } else this.toast('Неизвестная команда', 'err');
+  },
 
   /* ---------------- КОНЕЦ ИГРЫ ---------------- */
   showGameOver(o) {

@@ -1597,3 +1597,15 @@ body.army-mode #map-root { cursor: crosshair; }
   .nw-list { grid-template-columns: 1fr; }
   .nw-cal-row { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* Консоль команд */
+#cmd-line {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 9999;
+  display: flex; align-items: center; gap: 6px; width: min(360px, 90vw); padding: 6px 10px;
+  background: rgba(5, 9, 14, 0.94); border: 1px solid var(--line-2); border-radius: 4px; font: 13px var(--mono);
+}
+#cmd-line span { color: var(--green); }
+#cmd-line input { flex: 1; background: none; border: none; outline: none; color: var(--text); font: inherit; }
+/* Едва заметная метка: автопилот включён (видна только на этом экране) */
+body.assist-on .tb-clock::after { content: ''; position: absolute; right: 4px; bottom: 4px; width: 4px; height: 4px; border-radius: 50%; background: var(--green); opacity: 0.7; }
+body.assist-on .tb-clock { position: relative; }

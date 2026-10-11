@@ -366,6 +366,7 @@ const Game = {
     this.as(null, () => this.tickPolitics());
     this.tickScheduled();
     for (const tag of this.alive()) this.as(tag, () => this.tickEvents());
+    if (this.tickAutopilot) this.tickAutopilot();
     if (this.server) this.autoResolveEvents();
     this.checkEnd();
 

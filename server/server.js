@@ -25,7 +25,7 @@ const FLUSH_MS = 250;                  // как часто рассылать �
 
 /* ---------------- Игровое ядро: один раз компилируем, запускаем в каждой комнате ---------------- */
 const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/combat.js', 'js/ai.js', 'js/game.js',
-  'js/politics.js', 'js/events.js'];
+  'js/politics.js', 'js/events.js', 'js/autopilot.js'];
 const ENGINE_SRC = ENGINE_FILES.map(f => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n;\n')
   + '\n;({ Game, Geo, Bus, POWERS, DIFFICULTY });';
 const ENGINE = new vm.Script(ENGINE_SRC, { filename: 'engine.js' });
@@ -247,7 +247,7 @@ function runLoop(room) {
 
 /* ---------------- Действия игроков ---------------- */
 const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'saveTemplate', 'deleteTemplate', 'peace', 'influence', 'integrate', 'spy',
-  'nuke', 'startResearch', 'startFocus', 'chooseEvent', 'setPaused', 'setSpeed', 'supportParty', 'meddle', 'coup']);
+  'nuke', 'startResearch', 'startFocus', 'chooseEvent', 'setPaused', 'setSpeed', 'supportParty', 'meddle', 'coup', 'setAssist']);
 
 function doAction(room, p, name, args) {
   if (!room.api) return { ok: false, msg: 'Игра ещё не началась' };
