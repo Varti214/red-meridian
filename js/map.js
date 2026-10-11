@@ -16,6 +16,7 @@ const COLORS = {
 const MapView = {
   impl: null,
   mode: null,
+  layer: 'bloc',            // раскраска карты: блоки или идеологии
   el: null,
   hovered: null,
   selected: null,
@@ -138,6 +139,7 @@ const MapView = {
     let base, side, stroke;
     if (c.radioactive) { base = COLORS.waste; side = '#1c2208'; stroke = COLORS.wasteStroke; }
     else if (front) { base = COLORS.front; side = '#5a2a08'; stroke = COLORS.frontStroke; }
+    else if (this.layer === 'ide' && !c.inert && Game.gov(c)) { base = IDEOLOGIES[Game.gov(c).ide].color; side = U.shade(base, -0.55); stroke = '#ffffff'; }
     else if (Game.isPower(c.ctrl)) { const D = POWERS[c.ctrl]; base = D.color; side = D.side; stroke = D.stroke; }
     else { const F = FACTIONS[c.faction] || FACTIONS.NEU; base = F.color; side = F.side; stroke = F.stroke; }
 

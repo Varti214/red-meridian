@@ -24,7 +24,8 @@ const ROOM_TTL_MS = 20 * 60 * 1000;   // комната без игроков ж
 const FLUSH_MS = 250;                  // как часто рассылать изменения
 
 /* ---------------- Игровое ядро: один раз компилируем, запускаем в каждой комнате ---------------- */
-const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/combat.js', 'js/ai.js', 'js/game.js'];
+const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/combat.js', 'js/ai.js', 'js/game.js',
+  'js/politics.js', 'js/events.js'];
 const ENGINE_SRC = ENGINE_FILES.map(f => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n;\n')
   + '\n;({ Game, Geo, Bus, POWERS, DIFFICULTY });';
 const ENGINE = new vm.Script(ENGINE_SRC, { filename: 'engine.js' });
@@ -125,6 +126,11 @@ function wireCountry(c) {
   o.pop = Math.round(c.pop);
   o.intel = {};
   for (const [k, v] of Object.entries(c.intel)) o.intel[k] = Math.round(v);
+  if (c.pol) {
+    o.pol = Object.assign({}, c.pol, { pop: {}, base: {} });
+    for (const [k, v] of Object.entries(c.pol.pop)) o.pol.pop[k] = round1(v);
+    for (const [k, v] of Object.entries(c.pol.base)) o.pol.base[k] = round1(v);
+  }
   return o;
 }
 
@@ -241,7 +247,7 @@ function runLoop(room) {
 
 /* ---------------- Действия игроков ---------------- */
 const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'saveTemplate', 'deleteTemplate', 'peace', 'influence', 'integrate', 'spy',
-  'nuke', 'startResearch', 'startFocus', 'chooseEvent', 'setPaused', 'setSpeed']);
+  'nuke', 'startResearch', 'startFocus', 'chooseEvent', 'setPaused', 'setSpeed', 'supportParty', 'meddle', 'coup']);
 
 function doAction(room, p, name, args) {
   if (!room.api) return { ok: false, msg: 'Игра ещё не началась' };

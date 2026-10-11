@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Красный меридиан — Холодная война</title>
-<meta name="description" content="Браузерная гранд-стратегия в духе Hearts of Iron IV: альтернативная Холодная война, СССР под руководством Аркадия Громова.">
-<link rel="stylesheet" href="css/style.css?v=21">
+<title>Красный меридиан — 2018</title>
+<meta name="description" content="Браузерная гранд-стратегия в духе Hearts of Iron IV: современный мир с 2018 года: Россия, США и Китай, выборы, перевороты и мировые новости.">
+<link rel="stylesheet" href="css/style.css?v=22">
 </head>
 <body>
 
@@ -34,9 +34,11 @@
     <symbol id="i-globe" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9.5"/><ellipse cx="12" cy="12" rx="4.2" ry="9.5"/><path d="M2.5 12h19M4 7h16M4 17h16"/></g></symbol>
     <symbol id="i-sound" viewBox="0 0 24 24"><path fill="currentColor" d="M3 9h4l5-4v14l-5-4H3z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"/></symbol>
-    <symbol id="i-star-emblem" viewBox="0 0 64 64"><path fill="#e8343a" stroke="#f5c74e" stroke-width="2.2" stroke-linejoin="round" d="M32 4l7.8 17.2 18.8 2-14 12.6 4 18.5L32 44.8 15.4 54.3l4-18.5-14-12.6 18.8-2z"/><text x="32" y="40.5" text-anchor="middle" font-size="21" font-family="'Segoe UI Symbol','Noto Sans Symbols','DejaVu Sans',sans-serif" fill="#f5c74e">&#9773;</text></symbol>
+    <symbol id="i-star-emblem" viewBox="0 0 64 64"><path fill="#f5c74e" d="M32 3l25 9v18c0 15-10.5 27-25 32C17.5 57 7 45 7 30V12z"/><clipPath id="ru-cl"><path d="M32 7l21 7.6V30c0 12.6-8.8 22.6-21 27C19.8 52.6 11 42.6 11 30V14.6z"/></clipPath><g clip-path="url(#ru-cl)"><path fill="#ffffff" d="M0 0h64v24H0z"/><path fill="#1c4fc9" d="M0 24h64v15H0z"/><path fill="#d52b1e" d="M0 39h64v25H0z"/></g></symbol>
     <symbol id="i-emblem-west" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#1747c9" stroke="#dfe8ff" stroke-width="2.5"/><circle cx="32" cy="32" r="21" fill="none" stroke="#dfe8ff" stroke-width="1.2" opacity=".6"/><path fill="#ffffff" d="M32 12l5.2 11.4 12.5 1.3-9.3 8.4 2.7 12.3L32 39.1l-11.1 6.3 2.7-12.3-9.3-8.4 12.5-1.3z"/><path fill="#d6313b" d="M18 49h28v3H18zm3 4h22v2.5H21z"/></symbol>
-    <symbol id="i-emblem-axis" viewBox="0 0 64 64"><path fill="#2a2d33" stroke="#c9ced6" stroke-width="2.2" d="M32 5l22 8v17c0 14-9.6 25-22 30C19.6 55 10 44 10 30V13z"/><path fill="#e6e9ee" d="M27 15h10v12h12v10H37v12H27V37H15V27h12z"/><path fill="#2a2d33" d="M29.5 17.5h5v12h12v5h-12v12h-5v-12h-12v-5h12z"/></symbol>
+    <symbol id="i-emblem-axis" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#d8231d" stroke="#ffd84a" stroke-width="2.5"/><path fill="#ffd84a" d="M24 13l3.4 10.4h10.9l-8.8 6.4 3.4 10.4-8.9-6.4-8.8 6.4 3.4-10.4-8.9-6.4h11z"/><path fill="#ffd84a" d="M40 15l1 3h3.2l-2.6 1.9 1 3-2.6-1.9-2.6 1.9 1-3-2.6-1.9H39zM46 22l1 3h3.2l-2.6 1.9 1 3-2.6-1.9-2.6 1.9 1-3-2.6-1.9H45zM46 31l1 3h3.2l-2.6 1.9 1 3-2.6-1.9-2.6 1.9 1-3-2.6-1.9H45zM40 38l1 3h3.2l-2.6 1.9 1 3-2.6-1.9-2.6 1.9 1-3-2.6-1.9H39z"/></symbol>
+    <symbol id="i-news" viewBox="0 0 24 24"><path fill="currentColor" d="M3 4h15v15a2 2 0 0 0 2 2H5a2 2 0 0 1-2-2zm2 3v4h6V7zm8 0v1.6h3V7zm0 3v1.6h3V10zM5 13v1.6h11V13zm0 3v1.6h11V16zm15-8h2v11a2 2 0 0 1-2 2z"/></symbol>
+    <symbol id="i-vote" viewBox="0 0 24 24"><path fill="currentColor" d="M4 13h16l2 8H2zM7 3h10v9H7zm2.2 4.3l1.3-1.3 1.5 1.5 3-3 1.3 1.3-4.3 4.3z"/></symbol>
   </defs>
 </svg>
 
@@ -49,10 +51,10 @@
   <header id="topbar" class="hidden-ui">
     <div class="tb-nation" id="tb-nation">
       <svg class="emblem"><use href="#i-star-emblem"/></svg>
-      <div class="leader-portrait" aria-hidden="true">АГ</div>
+      <div class="leader-portrait" aria-hidden="true">ВП</div>
       <div class="tb-nation-text">
-        <div class="tb-nation-name">СССР</div>
-        <div class="tb-leader">Генсек А. Громов</div>
+        <div class="tb-nation-name">Россия</div>
+        <div class="tb-leader">Президент В. Путин</div>
       </div>
     </div>
     <div class="tb-resources">
@@ -72,9 +74,10 @@
     </div>
     <div class="tb-right">
       <button class="tb-btn" data-ui="research" title="Исследования (R)"><svg><use href="#i-book"/></svg><span>Наука</span><em class="tb-badge hidden" id="badge-research"></em></button>
+      <button class="tb-btn" data-ui="news" title="Мировые новости (N)"><svg><use href="#i-news"/></svg><span>Новости</span><em class="tb-badge hidden" id="badge-news"></em></button>
       <button class="tb-btn" data-ui="focus" title="Национальные фокусы (F)"><svg><use href="#i-tree"/></svg><span>Фокусы</span><em class="tb-badge hidden" id="badge-focus"></em></button>
       <div class="tb-clock">
-        <div class="tb-date" id="tb-date">5 марта 1953</div>
+        <div class="tb-date" id="tb-date">1 января 2018</div>
         <div class="tb-speed">
           <button class="spd-btn" data-ui="toggle-pause" id="btn-pause" title="Пауза / продолжить (Пробел)"><svg><use href="#i-play"/></svg></button>
           <button class="spd-btn" data-ui="speed-down" title="Медленнее (−)"><svg><use href="#i-minus"/></svg></button>
@@ -91,14 +94,19 @@
   <!-- ЛЕГЕНДА КАРТЫ -->
   <div id="legend" class="glass hidden-ui">
     <div class="lg-title">Легенда</div>
-    <div class="lg-row"><i style="--c:var(--f-sov)"></i>СССР</div>
-    <div class="lg-row"><i style="--c:var(--f-com)"></i>Коминтерн</div>
-    <div class="lg-row"><i style="--c:var(--f-west)"></i>Западный блок</div>
-    <div class="lg-row"><i style="--c:var(--f-axis)"></i>Пакт Оси</div>
-    <div class="lg-row"><i style="--c:var(--f-neu)"></i>Неприсоединившиеся</div>
+    <div class="lg-bloc">
+      <div class="lg-row"><i style="--c:var(--f-sov)"></i>Россия</div>
+      <div class="lg-row"><i style="--c:var(--f-com)"></i>ОДКБ</div>
+      <div class="lg-row"><i style="--c:var(--f-west)"></i>НАТО</div>
+      <div class="lg-row"><i style="--c:var(--f-chn)"></i>Китай</div>
+      <div class="lg-row"><i style="--c:var(--f-axis)"></i>Пояс и путь</div>
+      <div class="lg-row"><i style="--c:var(--f-neu)"></i>Неприсоединившиеся</div>
+    </div>
+    <div class="lg-ide hidden" id="lg-ide"></div>
     <div class="lg-row"><i style="--c:var(--front)"></i>Активный фронт</div>
     <div class="lg-row"><i style="--c:var(--waste)"></i>Радиоактивная пустошь</div>
     <div class="lg-mode">
+      <button class="btn btn-xs" data-ui="map-layer" id="btn-map-layer"><svg><use href="#i-vote"/></svg><span>Идеологии</span></button>
       <button class="btn btn-xs" data-ui="map-mode" id="btn-map-mode"><svg><use href="#i-globe"/></svg><span>2D-карта</span></button>
     </div>
   </div>
@@ -119,6 +127,7 @@
       <button class="chip" data-filter="dip">Дипломатия</button>
       <button class="chip" data-filter="sci">Наука</button>
       <button class="chip" data-filter="alert">Тревоги</button>
+      <button class="chip" data-filter="news">Новости</button>
     </div>
     <div class="lp-list" id="log-list"></div>
   </aside>
@@ -140,7 +149,7 @@
     <div class="ld-inner">
       <svg class="ld-emblem"><use href="#i-star-emblem"/></svg>
       <div class="ld-title">КРАСНЫЙ МЕРИДИАН</div>
-      <div class="ld-sub">Холодная война · альтернативная история</div>
+      <div class="ld-sub">Многополярный мир · с 2018 года</div>
       <div class="ld-bar"><i id="ld-bar"></i></div>
       <div class="ld-step" id="ld-step">Подготовка штаба…</div>
     </div>
@@ -148,20 +157,22 @@
 </div>
 
 <!-- 3D-движок: Three.js + globe.gl одним локальным файлом (без интернета) -->
-<script src="vendor/globe-bundle.min.js?v=21" onerror="window.__vendorFailed=true"></script>
+<script src="vendor/globe-bundle.min.js?v=22" onerror="window.__vendorFailed=true"></script>
 <!-- Границы стран: Natural Earth 1:110m -->
-<script src="data/countries.js?v=21" onerror="window.__geoFailed=true"></script>
-<script src="js/util.js?v=21"></script>
-<script src="js/data.js?v=21"></script>
-<script src="js/focuses.js?v=21"></script>
-<script src="js/geo.js?v=21"></script>
-<script src="js/combat.js?v=21"></script>
-<script src="js/ai.js?v=21"></script>
-<script src="js/game.js?v=21"></script>
-<script src="js/net.js?v=21"></script>
-<script src="js/audio.js?v=21"></script>
-<script src="js/map.js?v=21"></script>
-<script src="js/ui.js?v=21"></script>
-<script src="js/main.js?v=21"></script>
+<script src="data/countries.js?v=22" onerror="window.__geoFailed=true"></script>
+<script src="js/util.js?v=22"></script>
+<script src="js/data.js?v=22"></script>
+<script src="js/focuses.js?v=22"></script>
+<script src="js/geo.js?v=22"></script>
+<script src="js/combat.js?v=22"></script>
+<script src="js/ai.js?v=22"></script>
+<script src="js/game.js?v=22"></script>
+<script src="js/politics.js?v=22"></script>
+<script src="js/events.js?v=22"></script>
+<script src="js/net.js?v=22"></script>
+<script src="js/audio.js?v=22"></script>
+<script src="js/map.js?v=22"></script>
+<script src="js/ui.js?v=22"></script>
+<script src="js/main.js?v=22"></script>
 </body>
 </html>

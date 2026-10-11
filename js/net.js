@@ -166,7 +166,7 @@ const Net = {
 
   // Что на карте зависит от страны: если это не изменилось — карту не перекрашиваем
   mapSig(c) {
-    return [c.ctrl, c.faction, c.radioactive, JSON.stringify(c.wars), JSON.stringify(c.cb),
+    return [c.ctrl, c.faction, c.radioactive, JSON.stringify(c.wars), JSON.stringify(c.cb), c.pol && c.pol.ide,
       c.influence && c.influence.by, c.integrate && c.integrate.by].join('|');
   },
 

@@ -4,7 +4,7 @@
    Всё состояние лежит в одном объекте Game.S — сохранение игры
    это просто JSON.stringify(Game.S).
 
-   ДЕРЖАВЫ. Люди играют за «державы»: СССР (SOV), США (WST), Рейх (AXS).
+   ДЕРЖАВЫ. Люди играют за «державы»: Россия (SOV), США (WST), Китай (AXS).
    У каждой — свои ресурсы, наука, фокусы и разведданные: Game.S.powers[тег].
    Блок, который никто не выбрал, ведёт ИИ как обычные страны.
 
@@ -42,13 +42,13 @@ const Game = {
   powerOf(c) { return c && this.isPower(c.ctrl) ? c.ctrl : null; },
   mine(c, tag = this.cur) { return !!c && c.ctrl === tag; },
   def(tag = this.cur) { return POWERS[tag]; },
-  // Союзник державы: независимая страна её блока (для СССР — Коминтерн)
+  // Союзник державы: независимая страна её блока (для России — ОДКБ)
   isAlly(c, tag = this.cur) { return !!c && c.ctrl === c.id && !c.inert && POWERS[tag].family.includes(c.faction); },
 
   /* ---------------- СОЗДАНИЕ ИГРЫ ---------------- */
   newGame(difficulty = 'normal', tags = ['SOV'], names = {}) {
     const S = {
-      v: 2, day: 0, date: CFG.START_DATE, difficulty,
+      v: 3, day: 0, date: CFG.START_DATE, difficulty, nextNewsDay: 3,
       speed: 1, paused: true,
       tension: CFG.START.tension,
       countries: {}, powers: {}, pwars: {},
@@ -63,19 +63,15 @@ const Game = {
     this.modsCache = {};
     this.pending = {};
     for (const f of Geo.features) S.countries[f.properties.id] = this.makeCountry(f);
-
-    // Если за СССР никто не играет — союзные республики подчинены Москве как единая ИИ-держава
-    if (!tags.includes('SOV')) {
-      for (const id of USSR_CORE) { const c = S.countries[id]; if (c && id !== 'RUS') c.ctrl = 'RUS'; }
-    }
     for (const tag of tags) this.createPower(tag, names[tag]);
     this.eachCountry(c => { for (const t of tags) c.intel[t] = this.baseIntel(c, t); });
 
     for (const tag of tags) {
       const d = POWERS[tag];
-      this.log('info', 'Новый курс', `${d.title} ${d.leader} принимает руководство. Мир затаил дыхание.`, d.capital, tag);
+      this.log('info', 'Новый курс', `${d.title} ${d.leader} определяет курс державы на годы вперёд.`, d.capital, tag);
     }
     this.log('intel', 'Сводка разведки', 'Блоки наблюдают друг за другом. Разведданные по большинству стран неполны.', null, null);
+    this.news('Мир в 2018 году', 'Россия, США и Китай соперничают за влияние. В Сирии идёт война, Европа спорит о брексите, а Вашингтон готовит торговую войну с Пекином.', null);
     Bus.emit('newGame');
   },
 
@@ -83,10 +79,7 @@ const Game = {
     const p = f.properties, id = p.id;
     const ov = COUNTRY_OVERRIDES[id] || {};
     let faction = 'NEU';
-    if (USSR_CORE.includes(id)) faction = 'SOV';
-    else {
-      for (const [fac, list] of Object.entries(FACTION_MEMBERS)) if (list.includes(id)) faction = fac;
-    }
+    for (const [fac, list] of Object.entries(FACTION_MEMBERS)) if (list.includes(id)) faction = fac;
     const gdpB = (p.gdp || 0) / 1000;
     const facGen = U.clamp(Math.round(Math.log10(gdpB + 1) * 1.8 - 0.6), 0, 5);
     const factories = ov.fac != null ? ov.fac : facGen;
@@ -102,7 +95,8 @@ const Game = {
       intel: {}, noise: U.rand(-1, 1),
       sab: 0, sabDays: 0, control: 100,
       wars: {}, warDays: 0, cb: {}, influence: null, integrate: null,
-      radioactive: false, lostFrom: null
+      radioactive: false, lostFrom: null,
+      pol: faction === 'NONE' ? null : Politics.make(id, p.sub)
     };
   },
 
@@ -123,7 +117,8 @@ const Game = {
       templates: START_TEMPLATES.map((t, i) => ({ id: 'T' + (i + 1), name: t.names[tag], bats: Object.assign({}, t.bats) })),
       tplSeq: START_TEMPLATES.length, rmix: {},
       warheads: 0, warheadTimer: 0, factoryTimer: 0,
-      training: [], research: [], techs: [], focus: null, focuses: [],
+      training: [], research: [], techs: (d.techs || []).slice(), focus: null, focuses: [],
+      spirits: (d.spirits || []).map(x => Object.assign({}, x, { fx: Object.assign({}, x.fx) })),
       stats: { won: 0, lost: 0, annexed: 0, nukes: 0, spyOk: 0, spyFail: 0, divLost: 0, enemyKilled: 0 }
     };
     // Резерв — стрелковые дивизии; стартовые армии стоят на границах (часть дивизий — танковые)
@@ -154,7 +149,8 @@ const Game = {
   modsFor(tag) {
     const P = this.P(tag);
     if (!P) return this.emptyMods();
-    const key = P.techs.join(',') + '|' + P.focuses.join(',');
+    const ide = this.powerIde(tag);
+    const key = P.techs.join(',') + '|' + P.focuses.join(',') + '|' + ide + '|' + (P.spirits || []).map(x => x.id).join(',');
     const hit = this.modsCache[tag];
     if (hit && hit.key === key) return hit.m;
     const m = this.emptyMods();
@@ -170,6 +166,8 @@ const Game = {
     };
     P.techs.forEach(id => TECH_BY_ID[id] && apply(TECH_BY_ID[id].fx));
     P.focuses.forEach(id => FOCUS_BY_ID[id] && apply(FOCUS_BY_ID[id].fx));
+    if (ide && IDEOLOGIES[ide]) apply(IDEOLOGIES[ide].fx);
+    (P.spirits || []).forEach(x => apply(x.fx));
     m.orgRegen = CFG.ORG_REGEN * (1 + m.org);
     m.warheadDays = m.thermo ? 45 : CFG.WARHEAD_DAYS;
     this.modsCache[tag] = { key, m };
@@ -257,7 +255,7 @@ const Game = {
   },
 
   /* ---------------- ЕЖЕДНЕВНЫЕ ПРИРОСТЫ (для текущей державы) ---------------- */
-  dailyPP() { return (CFG.PP_BASE + this.mods.pp + this.allies().length * 0.1) * this.diff.pp; },
+  dailyPP() { return Math.max(0.3, (CFG.PP_BASE + this.mods.pp + this.allies().length * 0.1) * this.diff.pp); },
   dailyRP() { return (CFG.RP_BASE + this.playerFactories() * CFG.RP_PER_FACTORY) * (1 + this.mods.rp) * 1.1; },
   dailyMP() {
     let s = 0;
@@ -306,13 +304,15 @@ const Game = {
 
   /* ---------------- ЖУРНАЛ И СОБЫТИЯ С ВЫБОРОМ ----------------
      to — тег державы, которой адресована запись (null — всем). */
-  log(cat, title, text, cid, to) {
+  log(cat, title, text, cid, to, extra) {
     const S = this.S;
     if (to === undefined) to = this.cur;
     const e = { id: ++S.logSeq, date: S.date, cat, title, text, cid: cid || null, to: to || null };
+    if (extra) Object.assign(e, extra);
     S.log.unshift(e);
-    if (S.log.length > 200) S.log.length = 200;
+    if (S.log.length > 300) S.log.length = 300;
     Bus.emit('log', e);
+    return e;
   },
 
   // Событие с вариантами ответа. tag = null — каждой живой державе своё.
@@ -322,8 +322,10 @@ const Game = {
     if (!this.isPower(tag)) return;
     const iid = 'e' + (++this.eventSeq);
     const text = typeof def.text === 'function' ? this.as(tag, () => def.text(ctx)) : def.text;
-    const view = { id: def.id, title: def.title, text, art: def.art, cat: def.cat, options: def.options.map(o => ({ label: o.label, tip: o.tip || '' })) };
-    this.pending[iid] = { def, ctx, power: tag, day: this.S.day, t: Date.now(), view };
+    const options = (def.opts && def.opts[tag]) || def.options;
+    if (!options || !options.length) return;
+    const view = { id: def.id, title: def.title, text, art: def.art, cat: def.cat, options: options.map(o => ({ label: o.label, tip: o.tip || '' })) };
+    this.pending[iid] = { def, options, ctx, power: tag, day: this.S.day, t: Date.now(), view };
     Bus.emit('event', { iid, power: tag, view });
   },
   // Неотвеченные события державы (для повторной отправки после переподключения)
@@ -335,9 +337,10 @@ const Game = {
     const p = this.pending[iid];
     if (!p || p.power !== this.cur) return this.fail('Событие уже неактуально');
     delete this.pending[iid];
-    const opt = p.def.options[idx] || p.def.options[0];
+    const opts = p.options || p.def.options;
+    const opt = opts[idx] || opts[0];
     try { opt.fx && opt.fx(p.ctx); } catch (err) { console.error('[event]', p.def.id, err); }
-    if (p.def.options.length > 1) this.log('info', p.def.title, `Решение: «${opt.label}».${opt.tip ? ' ' + opt.tip + '.' : ''}`);
+    if (opts.length > 1) this.log('info', p.def.title, `Решение: «${opt.label}».${opt.tip ? ' ' + opt.tip + '.' : ''}`);
     Bus.emit('mapDirty');
     Bus.emit('stateChanged');
     return { ok: true };
@@ -360,6 +363,7 @@ const Game = {
     S.tension = U.clamp(S.tension - CFG.TENSION_DECAY * decay * (anyWar ? 0.5 : 1), 0, 100);
 
     this.as(null, () => AI.daily());
+    this.as(null, () => this.tickPolitics());
     this.tickScheduled();
     for (const tag of this.alive()) this.as(tag, () => this.tickEvents());
     if (this.server) this.autoResolveEvents();
@@ -375,6 +379,7 @@ const Game = {
     P.rp += this.dailyRP();
     P.mp += this.dailyMP();
     this.tickArmies();
+    this.tickSpirits();
     if (isFinite(m.factoryEvery) && ++P.factoryTimer >= m.factoryEvery) {
       P.factoryTimer = 0;
       this.addFactories(1, true);
@@ -418,7 +423,7 @@ const Game = {
         this.popup({
           id: 'sys_nuketest', art: 'i-nuke', cat: 'nuke',
           title: `Испытание: ${this.techName(t)}`,
-          text: 'Ядерный заряд готов к подрыву на полигоне. Объявить о нём на весь мир или провести испытание втайне?',
+          text: 'Новый комплекс готов к испытательному пуску. Объявить о нём на весь мир или провести испытание без огласки?',
           options: [
             { label: 'Провести открыто', tip: '+40 ПВ · напряжённость +8', fx: () => { this.addPP(40); this.addTension(8); } },
             { label: 'Провести тайно', tip: 'Напряжённость +2', fx: () => this.addTension(2) }
@@ -432,7 +437,7 @@ const Game = {
         this.popup({
           id: 'sys_r7', art: 'i-nuke', cat: 'nuke',
           title: 'Ракетно-ядерный щит',
-          text: 'С полигона стартовала межконтинентальная ракета. Теперь любая точка планеты в 30 минутах от возмездия. Первая боеголовка передана в распоряжение верховного командования.',
+          text: 'Межконтинентальный комплекс заступил на боевое дежурство. Любая точка планеты — в 30 минутах от возмездия. Решение о пуске теперь в руках верховного главнокомандующего.',
           options: [{ label: 'Да поможет нам разум', tip: '+1 боеголовка · ядерный удар разблокирован', fx: () => {} }]
         });
       }
@@ -468,7 +473,8 @@ const Game = {
       if (c.influence && --c.influence.daysLeft <= 0) {
         const { by, pp } = c.influence;
         c.influence = null;
-        const p = U.clamp(0.75 - S.tension / 250, 0.25, 0.9);
+        const p = this.isPower(by) ? this.influenceChance(c, by) : 0;
+        if (c.pol) c.pol.helped[by] = S.day;
         if (this.isPower(by) && c.ctrl === c.id && !this.tags().some(t => c.wars[t]) && U.chance(p)) {
           this.setFaction(c.id, POWERS[by].allyFaction);
         } else if (this.isPower(by)) {
@@ -502,7 +508,7 @@ const Game = {
   // События для текущей державы: исторические по датам и случайные
   tickEvents() {
     const S = this.S, tag = this.cur;
-    const mine = e => (e.powers || ['SOV']).includes(tag);
+    const mine = e => (!e.powers || e.powers.includes(tag)) && !!((e.opts && e.opts[tag]) || e.options);
     const key = id => tag + ':' + id;
     for (const e of EVENTS) {
       if (!e.date || !mine(e) || S.firedEvents[key(e.id)]) continue;
@@ -677,7 +683,7 @@ const Game = {
   },
 
   declareTension(c) {
-    return CFG.DECLARE_TENSION * (c.faction === 'AXIS' && this.cur === 'SOV' ? 0.5 : 1) * (c.major || this.isPower(c.ctrl) ? 1.5 : 1);
+    return CFG.DECLARE_TENSION * (c.major || this.isPower(c.ctrl) ? 1.5 : 1);
   },
   canDeclare(c) {
     if (this.outReason()) return this.outReason();
@@ -697,7 +703,7 @@ const Game = {
       this.log('alert', 'Нам объявлена война', `${POWERS[X].name} объявляет нам войну!`, id, Y);
       this.popup({
         id: 'sys_pwar', art: 'i-swords', cat: 'alert', title: 'Нам объявлена война',
-        text: `${POWERS[X].title} ${POWERS[X].leader} объявил войну. ${POWERS[X].name} — теперь наш противник. Готовьте оборону и контрудар.`,
+        text: `${this.leaderTitle(X)} ${this.leaderOf(X)} объявляет нам войну. ${POWERS[X].name} — теперь наш противник. Готовьте оборону и контрудар.`,
         options: [{ label: 'К оружию!', tip: 'Земли противника отмечены как фронт', fx: () => {} }]
       }, {}, Y);
     } else {
@@ -705,9 +711,9 @@ const Game = {
       c.warDays = 0;
       c.divs = c.divs * 1.15 + 1;
       this.log('mil', 'Война объявлена', `Мы начинаем войну. Противник: ${c.name}. Территория стала активным фронтом.`, id);
-      if (c.faction === 'AXIS' && X === 'SOV') this.log('dip', 'Запад молча одобряет', 'Вашингтон не скрывает удовлетворения: Советы воюют с Рейхом. Рост напряжённости вдвое ниже.');
       AI.onPlayerDeclares(c, X);
     }
+    this.news(`Война: ${POWERS[X].name} — ${Y ? POWERS[Y].name : c.name}`, `${this.leaderTitle(X)} ${this.leaderOf(X)} объявляет войну. Мировые рынки падают.`, id, 'war');
     Bus.emit('war', { by: X, target: id });
     Bus.emit('mapDirty');
     Bus.emit('stateChanged');
@@ -957,7 +963,7 @@ const Game = {
     P.armies = P.armies.filter(a => a.divs >= 0.5);
     dead.forEach(a => this.log('alert', 'Армия уничтожена', `${a.name} (командующий ${a.general}) перестала существовать.`, a.loc, tag));
   },
-  armyName(tag, n) { return { SOV: `${n}-я армия`, WST: `${n}-я армия США`, AXS: `${n}-я армия Рейха` }[tag] || `${n}-я армия`; },
+  armyName(tag, n) { return { SOV: `${n}-я армия`, WST: `${n}-я армия США`, AXS: `${n}-я группа армий НОАК` }[tag] || `${n}-я армия`; },
   newArmy(tag, name, divs, loc, mix) {
     const P = this.P(tag), d = POWERS[tag];
     P.armySeq++;
@@ -1235,6 +1241,7 @@ const Game = {
     this.P(X).stats.annexed++;
     if (wasIndependent) {
       this.log('success', 'Капитуляция', `${c.name} капитулирует. Территория присоединена, заводов получено: ${keep}.`, c.id, X);
+      this.news(`${c.name} капитулирует`, `Страна переходит под контроль державы «${POWERS[X].name}».`, c.id, 'war');
     } else {
       this.log('success', 'Освобождение', `Наши войска заняли территорию: ${c.name}.`, c.id, X);
     }
@@ -1343,7 +1350,7 @@ const Game = {
       // Мир между людьми — только по согласию второй стороны
       this.popup({
         id: 'sys_peace_offer', art: 'i-flag', cat: 'dip', title: 'Предложение о мире',
-        text: `${POWERS[X].title} ${POWERS[X].leader} предлагает белый мир: война окончена, границы остаются как есть.`,
+        text: `${this.leaderTitle(X)} ${this.leaderOf(X)} предлагает белый мир: война окончена, границы остаются как есть.`,
         options: [
           { label: 'Принять мир', tip: 'Война окончена · напряжённость −5', fx: () => this.makePowerPeace(X, Y) },
           { label: 'Отвергнуть', tip: 'Война продолжается', fx: () => this.log('dip', 'Мир отвергнут', `Противник (${POWERS[Y].name}) отверг наше предложение.`, null, X) }
@@ -1381,7 +1388,7 @@ const Game = {
     if (!this.S.pwars[k]) return;
     delete this.S.pwars[k];
     this.addTension(-5);
-    this.log('dip', 'Белый мир', `Мир между державами подписан: ${POWERS[X].name} и ${POWERS[Y].name}.`, null, null);
+    this.news('Мир между державами', `${POWERS[X].name} и ${POWERS[Y].name} подписывают мир на условиях статус-кво.`, null, 'war');
     Bus.emit('mapDirty');
     Bus.emit('stateChanged');
   },
@@ -1540,6 +1547,7 @@ const Game = {
     }
 
     this.log('nuke', 'Стратегический удар', `Ракета поразила цель: ${c.name}. Регион превращён в радиоактивную пустошь.`, id, null);
+    this.news(`Ядерный удар: ${c.name}`, `Держава «${POWERS[X].name}» применила ядерное оружие. Мир на грани.`, id, 'war');
     if (Y) {
       this.popup({
         id: 'sys_nuked', art: 'i-nuke', cat: 'nuke', title: 'Ядерный удар по нашей территории',
@@ -1618,6 +1626,17 @@ const Game = {
     if (fx.addDivs) this.addDivs(fx.addDivs);
     if (fx.addPP) this.addPP(fx.addPP);
     if (fx.tension) this.addTension(fx.tension);
+    if (fx.gov) {
+      const home = this.c(this.def().capital);
+      if (home && home.pol) {
+        if (fx.gov.leader === home.pol.leader && fx.gov.ide === home.pol.ide) home.pol.title = fx.gov.title || home.pol.title;
+        else {
+          this.setGov(home, fx.gov.ide, fx.gov.leader, 'focus', fx.gov.title);
+          this.news(`${this.def().name}: смена власти`, `К власти приходит ${fx.gov.leader} (${IDEOLOGIES[fx.gov.ide].name.toLowerCase()}).`, home.id, 'elections');
+        }
+      }
+    }
+    if (fx.pop) for (const [ide, n] of Object.entries(fx.pop)) this.addPop(ide, n);
     if (fx.claims) {
       const ids = fx.claims === 'neighbors'
         ? [...new Set(this.lands().flatMap(c => Geo.meta[c.id] ? Geo.meta[c.id].neighbors : []))]
@@ -1696,7 +1715,7 @@ const Game = {
   saveInfo(auto) {
     try {
       const S = JSON.parse(U.storage.get(this.saveKey(auto)));
-      return S && S.v === 2 ? { date: S.date, difficulty: S.difficulty, savedAt: S.savedAt || 0, auto: !!auto, me: S.me } : null;
+      return S && S.v === 3 ? { date: S.date, difficulty: S.difficulty, savedAt: S.savedAt || 0, auto: !!auto, me: S.me } : null;
     } catch (e) { return null; }
   },
   latestSave() {
@@ -1709,7 +1728,7 @@ const Game = {
     if (auto === undefined) { const l = this.latestSave(); auto = l ? l.auto : false; }
     try {
       const S = JSON.parse(U.storage.get(this.saveKey(auto)));
-      if (!S || S.v !== 2 || !S.countries || !S.powers) throw new Error('несовместимое сохранение');
+      if (!S || S.v !== 3 || !S.countries || !S.powers) throw new Error('несовместимое сохранение');
       this.loadState(S);
       return true;
     } catch (e) {
@@ -1729,6 +1748,10 @@ const Game = {
       if (!P.rmix) P.rmix = { T1: P.divs || 0 };
       if (!P.armies) { P.armies = []; P.armySeq = 0; }
       P.armies.forEach(a => { if (!a.mix) a.mix = { T1: a.divs }; });
+      if (!P.spirits) P.spirits = [];
+    }
+    for (const c of Object.values(S.countries)) {
+      if (c.pol === undefined && c.faction !== 'NONE') c.pol = Politics.make(c.id, (Geo.meta[c.id] || {}).sub);
     }
     this.S = S;
     if (S.me && S.powers[S.me]) { this.me = S.me; this.cur = S.me; }

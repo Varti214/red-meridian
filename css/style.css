@@ -23,10 +23,11 @@
   --blue: #5b9bff;
   --yellow: #f5d742;
 
-  --f-sov: #c8141e;
-  --f-com: #a23a52;
+  --f-sov: #b3121f;
+  --f-com: #9a3a5c;
   --f-west: #2d67c4;
-  --f-axis: #4c5059;
+  --f-chn: #d99a00;
+  --f-axis: #a8841c;
   --f-neu: #6b6748;
   --front: #ec7a1c;
   --waste: #5d7314;
@@ -1206,7 +1207,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--line-2); border-bottom-width: 2p
 }
 .intro p { max-width: 650px; margin: 8px auto; color: #c3cdd8; font-size: 14.5px; line-height: 1.6; }
 .c-west { color: #8cb9ff; font-weight: 600; }
-.c-axis { color: #c1c7d1; font-weight: 600; }
+.c-axis { color: #ffcf5a; font-weight: 600; }
 .c-sov { color: #ff7a6e; font-weight: 600; }
 .intro-diff { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 8px 44px 0; }
 .diff {
@@ -1514,3 +1515,85 @@ body.army-mode #map-root { cursor: crosshair; }
 .mix-chip { padding: 3px 8px; border: 1px solid var(--line-2); border-radius: 12px; font-size: 11.5px; color: #c9d2dc; background: rgba(255, 255, 255, 0.04); }
 .mix-chip b { color: var(--text); }
 @media (max-width: 900px) { .tpl-layout { grid-template-columns: 1fr; } }
+
+/* ============================================================
+   ПОЛИТИКА, ВЫБОРЫ, НОВОСТИ
+   ============================================================ */
+#tb-nation .leader-portrait { border-color: var(--ic, var(--gold)); box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.5), 0 0 12px color-mix(in srgb, var(--ic, #e3b448) 35%, transparent); }
+
+.cp-pol .cp-sec-title::before { background: var(--violet); }
+.pol-head { display: grid; grid-template-columns: 40px 1fr; grid-template-rows: auto auto; gap: 2px 10px; align-items: center; margin-bottom: 8px; }
+.pol-portrait {
+  grid-row: span 2; width: 40px; height: 44px; display: grid; place-items: center;
+  font: 700 15px var(--font-c); letter-spacing: 1px; color: #fff;
+  background: linear-gradient(170deg, color-mix(in srgb, var(--ic) 55%, #10161e), #0b1016);
+  border: 1px solid var(--ic); border-radius: 3px;
+}
+.pol-who { display: flex; flex-direction: column; min-width: 0; }
+.pol-who b { font: 700 14px var(--font-c); color: var(--text); }
+.pol-who span { font-size: 11px; color: var(--muted); }
+.pol-gov { font: 600 10.5px var(--font-c); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ic); }
+.pol-bar { display: flex; height: 8px; border-radius: 2px; overflow: hidden; background: rgba(255, 255, 255, 0.06); margin-bottom: 6px; }
+.pol-bar i { display: block; height: 100%; }
+.pol-list { display: flex; flex-direction: column; gap: 1px; margin-bottom: 8px; }
+.pol-row {
+  display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: center; width: 100%;
+  padding: 3px 6px; background: transparent; border: 1px solid transparent; border-radius: 3px; cursor: pointer; text-align: left;
+}
+.pol-row:hover { background: rgba(255, 255, 255, 0.05); }
+.pol-row.sel { border-color: rgba(164, 135, 242, 0.6); background: rgba(164, 135, 242, 0.1); }
+.pol-row i { width: 10px; height: 10px; border-radius: 2px; }
+.pol-row span { font-size: 12px; color: #c9d2dc; min-width: 0; }
+.pol-row small { font: 600 9.5px var(--font-c); text-transform: uppercase; letter-spacing: 0.08em; color: var(--gold); margin-left: 4px; }
+.pol-row em { font-style: normal; font-size: 11px; color: var(--muted); margin-left: 4px; }
+.pol-row b { font: 600 12px var(--font-c); color: var(--text); }
+.pol-row.ruling span { color: #fff; font-weight: 600; }
+.pol-elect { display: flex; gap: 8px; align-items: center; font-size: 11.5px; color: #c2ccd6; padding: 6px 8px; background: rgba(255, 255, 255, 0.035); border-radius: 3px; margin-bottom: 6px; }
+.pol-elect svg { width: 16px; height: 16px; color: var(--violet); flex: none; }
+.pol-elect em { font-style: normal; color: var(--orange); }
+.pol-note { font-size: 11.5px; color: #c2ccd6; margin: 0 0 6px; padding-left: 8px; border-left: 2px solid var(--violet); }
+.pol-note.warn { border-color: var(--orange); }
+.pol-pick { color: var(--ic); font-weight: 700; }
+
+.fnode-gov { display: flex; gap: 6px; align-items: center; font-size: 10.5px; line-height: 1.25; color: #dfe6ee; }
+.fnode-gov i { width: 8px; height: 8px; border-radius: 50%; background: var(--ic); flex: none; box-shadow: 0 0 6px var(--ic); }
+
+.m-news { width: min(860px, 100%); }
+.nw-mast { text-align: center; padding: 0 0 10px; border-bottom: 3px double var(--line-2); margin-bottom: 10px; }
+.nw-mast h2 { margin: 2px 0 0; font: 700 30px/1 Georgia, "Times New Roman", serif; letter-spacing: 0.04em; text-transform: uppercase; }
+.nw-k { font: 600 11px var(--font-c); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.nw-tabs { margin-bottom: 10px; }
+.nw-list { max-height: calc(100vh - 290px); overflow: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; padding-right: 4px; }
+.nw-item { padding: 10px 0; border-bottom: 1px solid var(--line); cursor: default; }
+.nw-item[data-act] { cursor: pointer; }
+.nw-item[data-act]:hover h3 { color: var(--gold-2); }
+.nw-item.lead { grid-column: 1 / -1; }
+.nw-item.lead h3 { font-size: 22px; }
+.nw-item h3 { margin: 3px 0 4px; font: 700 16px/1.25 Georgia, "Times New Roman", serif; color: #f1f4f7; }
+.nw-item p { margin: 0; font-size: 12.5px; line-height: 1.5; color: #b9c4cf; }
+.nw-meta { display: flex; gap: 8px; font: 600 10.5px var(--font-c); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.nw-meta em { font-style: normal; color: var(--gold); }
+.nw-item.k-elections .nw-meta::before { content: 'Выборы и власть'; color: var(--violet); }
+.nw-item.k-war .nw-meta::before { content: 'Война'; color: var(--red-2); }
+.nw-empty { padding: 30px; text-align: center; color: var(--muted); }
+.nw-cal { max-height: calc(100vh - 290px); overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.nw-cal-row {
+  display: grid; grid-template-columns: 150px 1fr 1.6fr; gap: 12px; align-items: center; padding: 7px 10px; text-align: left;
+  background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; border-radius: 3px; cursor: pointer;
+}
+.nw-cal-row:hover { border-color: var(--line-2); }
+.nw-cal-row.soon { background: rgba(164, 135, 242, 0.09); }
+.nw-cal-date { font: 600 12px var(--font-c); color: var(--text); display: flex; flex-direction: column; }
+.nw-cal-date em { font-style: normal; font-size: 10.5px; color: var(--muted); }
+.nw-cal-row.soon .nw-cal-date em { color: var(--violet); }
+.nw-cal-row b { font: 700 13px var(--font-c); }
+.nw-cal-row b small { font-size: 9.5px; text-transform: uppercase; color: var(--gold); margin-left: 4px; }
+.nw-cal-race { font-size: 11.5px; color: #c2ccd6; }
+.nw-cal-race i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 4px -1px 0; }
+.nw-cal-race em { font-style: normal; color: var(--orange); }
+.lp-filters .chip[data-filter="news"].active { border-color: var(--violet); }
+.cat-news .log-badge { background: rgba(164, 135, 242, 0.18); color: #cdbcff; }
+@media (max-width: 900px) {
+  .nw-list { grid-template-columns: 1fr; }
+  .nw-cal-row { grid-template-columns: 1fr; gap: 2px; }
+}

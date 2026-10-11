@@ -1,17 +1,20 @@
 'use strict';
 /* ============================================================
-   СТАТИЧЕСКИЕ ДАННЫЕ: настройки баланса, фракции, страны,
-   технологии, национальные фокусы, тайные операции, события.
+   СТАТИЧЕСКИЕ ДАННЫЕ: настройки баланса, блоки, страны,
+   технологии, тайные операции, батальоны, державы.
+   Сценарий: 1 января 2018 года, многополярный мир.
+   Политика (идеологии, правительства, выборы) — в js/politics.js,
+   события и мировые новости — в js/events.js.
    Хотите поменять баланс — меняйте числа здесь.
    ============================================================ */
 
 const CFG = {
-  START_DATE: Date.UTC(1953, 2, 5),          // 5 марта 1953
+  START_DATE: Date.UTC(2018, 0, 1),           // 1 января 2018
   SPEEDS: [0, 1000, 500, 250, 100],           // мс реального времени на 1 игровой день (индекс 1..4)
   PLAYER: 'SOV',
   CAPITAL: 'RUS',
   CAPITAL_POS: { lat: 55.75, lng: 37.62 },    // Москва
-  START: { pp: 50, mp: 1500, divs: 30, org: 100, rp: 40, tension: 12 },
+  START: { pp: 60, mp: 1500, divs: 30, org: 100, rp: 50, tension: 18 },
 
   PP_BASE: 2.0,                // политвласть в день
   RP_BASE: 1.0,                // очки исследований в день
@@ -31,6 +34,8 @@ const CFG = {
   PEACE_PP: 25,
   INFLUENCE: { pp: 40, days: 45 },
   INTEGRATE: { pp: 60, days: 60 },
+  // Политика: поддержка партии, вмешательство в выборы, переворот
+  POL: { support: 20, supportDays: 120, meddle: 35, meddleWindow: 180, coup: 60, coupMinPop: 12 },
 
   WARHEAD_DAYS: 90,
   NUKE_TENSION: 30,
@@ -38,60 +43,49 @@ const CFG = {
   VICTORY_SHARE: 0.55,         // доля мировой промышленности для победы
   TENSION_DECAY: 0.06,
   AUTOSAVE_DAYS: 30,
-  SAVE_KEY: 'red_meridian_save_v1',
+  SAVE_KEY: 'red_meridian_save_v3',
   SETTINGS_KEY: 'red_meridian_settings_v1'
 };
 
+/* Блоки. Ключи исторические (так их знает код), названия — 2018 года:
+   SOV — земли России, COM — ОДКБ и союзники Москвы, WEST — НАТО и союзники США,
+   AXIS — партнёры Китая по «Поясу и пути», NEU — неприсоединившиеся. */
 const FACTIONS = {
-  SOV:  { name: 'СССР',               color: '#c8141e', side: '#5c0a0f', stroke: '#ff8a7a', leader: 'RUS' },
-  COM:  { name: 'Коминтерн',          color: '#a23a52', side: '#431824', stroke: '#f0a0b0', leader: 'RUS' },
-  WEST: { name: 'Западный блок',      color: '#2d67c4', side: '#12284d', stroke: '#9cc2ff', leader: 'USA' },
-  AXIS: { name: 'Пакт Оси',           color: '#4c5059', side: '#1d1f24', stroke: '#b5bcc8', leader: 'DEU' },
+  SOV:  { name: 'Россия',             color: '#b3121f', side: '#4d070c', stroke: '#ff8a7a', leader: 'RUS' },
+  COM:  { name: 'ОДКБ',               color: '#9a3a5c', side: '#3f1726', stroke: '#f0a0bc', leader: 'RUS' },
+  WEST: { name: 'НАТО',               color: '#2d67c4', side: '#12284d', stroke: '#9cc2ff', leader: 'USA' },
+  AXIS: { name: 'Пояс и путь',        color: '#a8841c', side: '#3e3008', stroke: '#f0d070', leader: 'CHN' },
   NEU:  { name: 'Неприсоединившиеся', color: '#6b6748', side: '#2a281b', stroke: '#b9b48e' },
   NONE: { name: 'Без государства',    color: '#7f8b96', side: '#30363c', stroke: '#c9d2da' }
 };
 
-// Множитель обороны дивизий по доктрине фракции
-const FACTION_DEF = { SOV: 1.0, COM: 0.9, WEST: 1.15, AXIS: 1.1, NEU: 0.85, NONE: 0.5 };
+// Множитель обороны дивизий по доктрине блока
+const FACTION_DEF = { SOV: 1.0, COM: 0.9, WEST: 1.15, AXIS: 1.05, NEU: 0.85, NONE: 0.5 };
 
-const USSR_CORE = ['RUS', 'UKR', 'BLR', 'KAZ', 'UZB', 'TKM', 'KGZ', 'TJK', 'GEO', 'ARM', 'AZE', 'LTU', 'LVA', 'EST', 'MDA'];
-
-// Альтернативная история: в 1945-м Запад подписал сепаратный мир с генеральской хунтой,
-// и «Европейский Рейх» уцелел как третий полюс Холодной войны.
+// Состав блоков на 1 января 2018 года
 const FACTION_MEMBERS = {
-  COM:  ['POL', 'CZE', 'SVK', 'ROU', 'BGR', 'ALB', 'MNG', 'PRK', 'CHN', 'VNM'],
-  WEST: ['USA', 'GBR', 'FRA', 'CAN', 'ITA', 'NLD', 'BEL', 'LUX', 'NOR', 'DNK', 'ISL', 'TUR', 'GRC', 'JPN', 'KOR',
-         'PHL', 'AUS', 'NZL', 'PAK', 'IRN', 'THA', 'TWN', 'ZAF', 'FLK', 'ATF', 'GRL', 'PRI', 'IRL', 'ISR'],
-  AXIS: ['DEU', 'AUT', 'HUN', 'HRV', 'ESP', 'PRT', 'ARG'],
+  COM:  ['BLR', 'KAZ', 'ARM', 'KGZ', 'TJK', 'SYR'],
+  WEST: ['USA', 'CAN', 'GBR', 'FRA', 'DEU', 'ITA', 'ESP', 'PRT', 'NLD', 'BEL', 'LUX', 'NOR', 'DNK', 'ISL', 'POL', 'CZE',
+         'SVK', 'HUN', 'ROU', 'BGR', 'HRV', 'SVN', 'ALB', 'MNE', 'EST', 'LVA', 'LTU', 'GRC', 'TUR', 'JPN', 'KOR', 'AUS',
+         'NZL', 'ISR', 'GRL', 'PRI', 'FLK', 'ATF', 'NCL'],
+  AXIS: ['CHN', 'PRK', 'PAK', 'LAO', 'KHM'],
   NONE: ['ATA']
 };
 
-const MAJORS = ['USA', 'GBR', 'FRA', 'DEU', 'JPN', 'CHN', 'ITA', 'IND', 'CAN'];
+const MAJORS = ['USA', 'GBR', 'FRA', 'DEU', 'JPN', 'CHN', 'ITA', 'IND', 'CAN', 'BRA', 'KOR'];
 
 // Ручные стартовые значения: заводы (fac), дивизии (divs), укрепления (fort)
 const COUNTRY_OVERRIDES = {
-  // СССР
-  RUS: { fac: 42 }, UKR: { fac: 9 }, BLR: { fac: 3 }, KAZ: { fac: 4 }, UZB: { fac: 2 }, AZE: { fac: 2 },
-  GEO: { fac: 1 }, ARM: { fac: 1 }, LTU: { fac: 1 }, LVA: { fac: 1 }, EST: { fac: 1 }, MDA: { fac: 1 },
-  KGZ: { fac: 1 }, TJK: { fac: 1 }, TKM: { fac: 1 },
-  // Западный блок
-  USA: { fac: 60, divs: 38, fort: 1 }, GBR: { fac: 24, divs: 18, fort: 2 }, FRA: { fac: 16, divs: 16, fort: 1 },
-  CAN: { fac: 9, divs: 6 }, ITA: { fac: 9, divs: 10 }, JPN: { fac: 10, divs: 8, fort: 1 }, TUR: { fac: 4, divs: 14, fort: 1 },
-  NLD: { fac: 4, divs: 4 }, BEL: { fac: 4, divs: 4 }, NOR: { fac: 2, divs: 4, fort: 1 }, DNK: { fac: 1, divs: 2 },
-  KOR: { fac: 2, divs: 10, fort: 1 }, TWN: { fac: 1, divs: 8, fort: 2 }, IRN: { fac: 2, divs: 6 }, PAK: { fac: 2, divs: 7 },
-  AUS: { fac: 5, divs: 4 }, ZAF: { fac: 4, divs: 3 }, GRC: { fac: 1, divs: 6, fort: 1 }, ISR: { fac: 1, divs: 4, fort: 1 },
-  // Пакт Оси
-  DEU: { fac: 34, divs: 32, fort: 2 }, ESP: { fac: 6, divs: 12, fort: 1 }, ARG: { fac: 6, divs: 8 },
-  HUN: { fac: 3, divs: 6 }, AUT: { fac: 3, divs: 5, fort: 1 }, HRV: { fac: 1, divs: 3 }, PRT: { fac: 2, divs: 4 },
-  // Коминтерн
-  CHN: { fac: 12, divs: 45 }, POL: { fac: 6, divs: 10 }, CZE: { fac: 5, divs: 6 }, SVK: { fac: 2, divs: 3 },
-  ROU: { fac: 4, divs: 8 }, BGR: { fac: 2, divs: 5 }, ALB: { fac: 1, divs: 2 }, MNG: { fac: 1, divs: 3 },
-  PRK: { fac: 2, divs: 8 }, VNM: { fac: 1, divs: 6 },
-  // Неприсоединившиеся
-  IND: { fac: 8, divs: 14 }, SWE: { fac: 5, divs: 6, fort: 1 }, CHE: { fac: 3, divs: 6, fort: 3 },
-  FIN: { fac: 2, divs: 6, fort: 2 }, SRB: { fac: 3, divs: 10, fort: 1 }, EGY: { fac: 2, divs: 5 },
-  BRA: { fac: 5, divs: 6 }, MEX: { fac: 3, divs: 4 }, IDN: { fac: 3, divs: 9 }, AFG: { fac: 0, divs: 4, fort: 2 },
-  ATA: { fac: 0, divs: 0 }
+  RUS: { fac: 40 }, USA: { fac: 70, divs: 36, fort: 1 }, CHN: { fac: 68, divs: 45, fort: 1 },
+  JPN: { fac: 20, divs: 8, fort: 1 }, DEU: { fac: 20, divs: 8 }, IND: { fac: 16, divs: 30, fort: 1 },
+  GBR: { fac: 12, divs: 6, fort: 1 }, FRA: { fac: 12, divs: 8 }, KOR: { fac: 10, divs: 14, fort: 2 },
+  ITA: { fac: 10, divs: 6 }, BRA: { fac: 9, divs: 8 }, CAN: { fac: 8, divs: 3 }, TUR: { fac: 8, divs: 16, fort: 1 },
+  MEX: { fac: 7, divs: 4 }, ESP: { fac: 7, divs: 5 }, IRN: { fac: 5, divs: 14, fort: 1 }, SAU: { fac: 6, divs: 6 },
+  ISR: { fac: 4, divs: 8, fort: 2 }, PAK: { fac: 3, divs: 14, fort: 1 }, POL: { fac: 6, divs: 6 }, UKR: { fac: 3, divs: 10, fort: 1 },
+  PRK: { fac: 2, divs: 22, fort: 3 }, TWN: { fac: 6, divs: 8, fort: 2 }, IDN: { fac: 6, divs: 8 }, AUS: { fac: 6, divs: 3 },
+  EGY: { fac: 3, divs: 10 }, VNM: { fac: 3, divs: 10, fort: 1 }, KAZ: { fac: 3, divs: 3 }, BLR: { fac: 2, divs: 4 },
+  SYR: { fac: 0, divs: 5 }, SWE: { fac: 4, divs: 3 }, CHE: { fac: 4, divs: 3, fort: 2 }, FIN: { fac: 2, divs: 4, fort: 2 },
+  AFG: { fac: 0, divs: 5, fort: 2 }, ATA: { fac: 0, divs: 0 }
 };
 
 // Ручные центры стран, где автоматический расчёт ошибается из-за островов и 180-го меридиана
@@ -106,51 +100,51 @@ const CENTROID_OVERRIDES = {
 const SEA_LINKS = [
   ['RUS', 'JPN'], ['RUS', 'USA'], ['GBR', 'FRA'], ['ESP', 'MAR'], ['DNK', 'SWE'], ['DNK', 'NOR'], ['CUB', 'USA'],
   ['TWN', 'CHN'], ['LKA', 'IND'], ['FIN', 'EST'], ['AUS', 'PNG'], ['KOR', 'JPN'], ['ITA', 'TUN'],
-  ['YEM', 'DJI'], ['SAU', 'EGY'], ['ISL', 'GRL'], ['DEU', 'SWE']
+  ['YEM', 'DJI'], ['SAU', 'EGY'], ['ISL', 'GRL'], ['DEU', 'SWE'], ['TWN', 'PHL'], ['CHN', 'KOR']
 ];
 
 const DIFFICULTY = {
-  easy:   { name: 'Курсант', desc: 'Слабая оборона врага, щедрая политвласть.', aiDef: 0.85, aiGrowth: 0.75, aiAggr: 0.6, pp: 1.25 },
-  normal: { name: 'Маршал',  desc: 'Задуманный баланс сил.',                     aiDef: 1.0,  aiGrowth: 1.0,  aiAggr: 1.0, pp: 1.0 },
-  hard:   { name: 'Генсек',  desc: 'Мир объединится против вас. Без права на ошибку.', aiDef: 1.2, aiGrowth: 1.3, aiAggr: 1.4, pp: 0.9 }
+  easy:   { name: 'Новичок',           desc: 'Слабая оборона врага, щедрая политвласть.',      aiDef: 0.85, aiGrowth: 0.75, aiAggr: 0.6, pp: 1.25 },
+  normal: { name: 'Стратег',           desc: 'Задуманный баланс сил.',                          aiDef: 1.0,  aiGrowth: 1.0,  aiAggr: 1.0, pp: 1.0 },
+  hard:   { name: 'Главнокомандующий', desc: 'Мир объединится против вас. Без права на ошибку.', aiDef: 1.2, aiGrowth: 1.3, aiAggr: 1.4, pp: 0.9 }
 };
 
 /* ---------------- ТЕХНОЛОГИИ ---------------- */
 const TECH_BRANCHES = [
-  { id: 'industry', icon: 'i-factory', name: 'Машиностроение двойного назначения', desc: 'Пассивный рост заводов и научного потенциала' },
-  { id: 'armor',    icon: 'i-div',     name: 'Тяжёлые прорывные танки',            desc: 'Множитель силы атаки дивизий' },
-  { id: 'nuclear',  icon: 'i-nuke',    name: 'Проект «Сокрушение Манхэттена»',     desc: 'Лаборатория №2: путь к стратегическому ядерному оружию' }
+  { id: 'industry', icon: 'i-factory', name: 'Цифровая экономика',            desc: 'Пассивный рост заводов и научного потенциала' },
+  { id: 'armor',    icon: 'i-div',     name: 'Армия нового поколения',        desc: 'Множитель силы атаки дивизий' },
+  { id: 'nuclear',  icon: 'i-nuke',    name: 'Стратегические ядерные силы',   desc: 'Арсенал есть у всех трёх держав — путь к праву на ядерный удар' }
 ];
 
 const TECHS = [
-  { id: 'ind1', branch: 'industry', tier: 1, name: 'Станки двойного назначения', cost: 90, days: 20, req: [], fx: { factoryEvery: 30 },
-    desc: 'Гражданские цеха переводятся на выпуск военной продукции. +1 завод каждые 30 дней.' },
-  { id: 'ind2', branch: 'industry', tier: 2, name: 'Уральские конвейеры', cost: 195, days: 30, req: ['ind1'], fx: { factoryEvery: 20, rp: 0.15 },
+  { id: 'ind1', branch: 'industry', tier: 1, name: 'Цифровые платформы', cost: 90, days: 20, req: [], fx: { factoryEvery: 30 },
+    desc: 'Госуслуги, логистика и заводы уходят в «цифру». +1 завод каждые 30 дней.' },
+  { id: 'ind2', branch: 'industry', tier: 2, name: 'Роботизированные производства', cost: 195, days: 30, req: ['ind1'], fx: { factoryEvery: 20, rp: 0.15 },
     desc: '+1 завод каждые 20 дней, +15% очков исследований.' },
-  { id: 'ind3', branch: 'industry', tier: 3, name: 'Плановая автоматизация', cost: 360, days: 40, req: ['ind2'], fx: { factoryEvery: 12, train: 0.25 },
+  { id: 'ind3', branch: 'industry', tier: 3, name: 'Искусственный интеллект', cost: 360, days: 40, req: ['ind2'], fx: { factoryEvery: 12, train: 0.25 },
     desc: '+1 завод каждые 12 дней, обучение дивизий быстрее на 25%.' },
-  { id: 'ind4', branch: 'industry', tier: 4, name: 'Кибернетика Госплана', cost: 570, days: 55, req: ['ind3'], fx: { factoryEvery: 7, rp: 0.25, pp: 0.5 },
+  { id: 'ind4', branch: 'industry', tier: 4, name: 'Квантовые вычисления', cost: 570, days: 55, req: ['ind3'], fx: { factoryEvery: 7, rp: 0.25, pp: 0.5 },
     desc: '+1 завод каждые 7 дней, +25% ОИ, +0,5 политвласти в день.' },
 
-  { id: 'arm1', branch: 'armor', tier: 1, name: 'Т-54М «Прорыв»', cost: 90, days: 20, req: [], fx: { attack: 1.1 },
-    desc: 'Модернизированный средний танк. Атака дивизий ×1,1.' },
-  { id: 'arm2', branch: 'armor', tier: 2, name: 'ИС-7 «Молот»', cost: 210, days: 30, req: ['arm1'], fx: { attack: 1.25, train: 0.1 },
-    desc: 'Тяжёлый танк прорыва. Атака ×1,25, обучение дивизий быстрее на 10%.' },
-  { id: 'arm3', branch: 'armor', tier: 3, name: 'Объект 279', cost: 375, days: 45, req: ['arm2'], fx: { attack: 1.45, loss: 0.2 },
-    desc: 'Четырёхгусеничный танк для ядерной войны. Атака ×1,45, потери в наступлении −20%.' },
-  { id: 'arm4', branch: 'armor', tier: 4, name: 'Танковые армии прорыва', cost: 600, days: 60, req: ['arm3'], fx: { attack: 1.7, org: 0.5 },
-    desc: 'Оперативные объединения нового типа. Атака ×1,7, восстановление организации +50%.' },
+  { id: 'arm1', branch: 'armor', tier: 1, name: 'Модернизация Т-90М', cost: 90, days: 20, req: [], fx: { attack: 1.1 },
+    desc: 'Новая СУО, динамическая защита и тепловизоры. Атака дивизий ×1,1.' },
+  { id: 'arm2', branch: 'armor', tier: 2, name: 'Платформа «Армата»', cost: 210, days: 30, req: ['arm1'], fx: { attack: 1.25, train: 0.1 },
+    desc: 'Танк с необитаемой башней. Атака ×1,25, обучение дивизий быстрее на 10%.' },
+  { id: 'arm3', branch: 'armor', tier: 3, name: 'Ударные беспилотники', cost: 375, days: 45, req: ['arm2'], fx: { attack: 1.45, loss: 0.2 },
+    desc: 'Дроны-разведчики и барражирующие боеприпасы. Атака ×1,45, потери в наступлении −20%.' },
+  { id: 'arm4', branch: 'armor', tier: 4, name: 'Сетецентрическая война', cost: 600, days: 60, req: ['arm3'], fx: { attack: 1.7, org: 0.5 },
+    desc: 'Единое информационное поле от спутника до солдата. Атака ×1,7, восстановление организации +50%.' },
 
-  { id: 'nuc1', branch: 'nuclear', tier: 1, name: 'Обогащение урана «Челябинск-40»', cost: 180, days: 30, req: [], fx: {},
-    desc: 'Промышленное разделение изотопов урана-235.' },
-  { id: 'nuc2', branch: 'nuclear', tier: 2, name: 'Реактор «Аннушка»', cost: 330, days: 40, req: ['nuc1'], fx: { rp: 0.05 },
-    desc: 'Наработка оружейного плутония. +5% ОИ.' },
-  { id: 'nuc3', branch: 'nuclear', tier: 3, name: 'Изделие РДС-Т «Гроза»', cost: 540, days: 55, req: ['nuc2'], fx: {},
-    desc: 'Боевой ядерный заряд. Его испытание не останется незамеченным.' },
-  { id: 'nuc4', branch: 'nuclear', tier: 4, name: 'Носитель Р-7 «Семёрка»', cost: 780, days: 70, req: ['nuc3'], fx: { nukes: true },
-    desc: 'Межконтинентальная ракета. ОТКРЫВАЕТ ЯДЕРНЫЙ УДАР. +1 боеголовка, далее +1 каждые 90 дней.' },
-  { id: 'nuc5', branch: 'nuclear', tier: 5, name: 'Термоядерное изделие «Царь»', cost: 1050, days: 90, req: ['nuc4'], fx: { thermo: true },
-    desc: 'Удар уничтожает все войска цели и задевает соседей (−25% дивизий). Боеголовки — каждые 45 дней.' }
+  { id: 'nuc1', branch: 'nuclear', tier: 1, name: 'Модернизация ядерной триады', cost: 180, days: 30, req: [], fx: {},
+    desc: 'Новые подлодки, бомбардировщики и шахтные комплексы.' },
+  { id: 'nuc2', branch: 'nuclear', tier: 2, name: 'Система предупреждения о ракетном нападении', cost: 330, days: 40, req: ['nuc1'], fx: { rp: 0.05 },
+    desc: 'Радары и спутники видят пуск за минуты. +5% ОИ.' },
+  { id: 'nuc3', branch: 'nuclear', tier: 3, name: 'Доктрина ядерного сдерживания', cost: 540, days: 55, req: ['nuc2'], fx: {},
+    desc: 'Политическое решение: при каких условиях держава применит оружие. Его испытание не останется незамеченным.' },
+  { id: 'nuc4', branch: 'nuclear', tier: 4, name: 'Боевое дежурство «Сармат»', cost: 780, days: 70, req: ['nuc3'], fx: { nukes: true },
+    desc: 'Тяжёлая МБР заступает на дежурство. ОТКРЫВАЕТ ЯДЕРНЫЙ УДАР. +1 боеголовка, далее +1 каждые 90 дней.' },
+  { id: 'nuc5', branch: 'nuclear', tier: 5, name: 'Гиперзвуковой блок «Авангард»', cost: 1050, days: 90, req: ['nuc4'], fx: { thermo: true },
+    desc: 'Перехватить невозможно. Удар уничтожает все войска цели и задевает соседей (−25% дивизий). Боеголовки — каждые 45 дней.' }
 ];
 
 /* Национальные фокусы — в js/focuses.js (у каждой державы своё дерево) */
@@ -159,359 +153,95 @@ const TECHS = [
 const SPY_OPS = [
   { id: 'intel',    name: 'Сбор разведданных',   pp: 10, base: 0.85, icon: 'i-eye',
     desc: '+45 к уровню разведданных: точные сведения о дивизиях и обороне.' },
-  { id: 'sabotage', name: 'Саботаж обороны',     pp: 25, base: 0.7,  icon: 'i-shield',
-    desc: '−20% обороны цели на 45 дней (накапливается до −60%).' },
+  { id: 'sabotage', name: 'Кибератака на оборону', pp: 25, base: 0.7,  icon: 'i-shield',
+    desc: 'Связь, ПВО и логистика выведены из строя: −20% обороны цели на 45 дней (накапливается до −60%).' },
   { id: 'industry', name: 'Диверсия на заводах', pp: 35, base: 0.6,  icon: 'i-factory',
     desc: 'Уничтожить 1–3 завода противника.' }
 ];
 
-const OP_NAMES = ['Багратион-2', 'Гроза', 'Буря', 'Вихрь', 'Кутузов', 'Суворов', 'Полярная звезда', 'Красный молот',
-  'Стальной рассвет', 'Днепр', 'Метель', 'Искра', 'Уран-2', 'Зарница', 'Таран', 'Северное сияние', 'Ураган', 'Клинок',
-  'Рубин', 'Молния', 'Гранит', 'Кремень', 'Сокол', 'Беркут', 'Аврора'];
+const OP_NAMES = ['Гроза', 'Буря', 'Вихрь', 'Кутузов', 'Суворов', 'Полярная звезда', 'Стальной рассвет', 'Днепр', 'Метель',
+  'Искра', 'Зарница', 'Таран', 'Северное сияние', 'Ураган', 'Клинок', 'Рубин', 'Молния', 'Гранит', 'Кремень', 'Сокол',
+  'Беркут', 'Аврора', 'Гиперион', 'Цифровой щит', 'Восточный ветер'];
 
 /* ---------------- БАТАЛЬОНЫ И ШАБЛОНЫ ДИВИЗИЙ ----------------
    Дивизия собирается из батальонов (до 10). Характеристики дивизии — сумма батальонов:
      att/def — вклад в атаку и оборону; org — «выносливость» (чем выше, тем медленнее тает организация в наступлении);
-     speed — скорость марша (берётся у самого медленного: пешая пехота тормозит, остальное на тягачах); pp/mp/days — цена и время обучения.
-   armor — танки: усиливаются танковыми технологиями, помогают прорыву;
-   antiArmor — ПТ: в обороне гасят танковые удары. */
+     speed — скорость марша (берётся у самого медленного: пешая пехота тормозит, остальное на технике); pp/mp/days — цена и время обучения.
+   armor — танки: усиливаются технологиями «Армии нового поколения», помогают прорыву;
+   antiArmor — ПТРК: в обороне гасят танковые удары. */
 const BATTALIONS = {
-  inf:  { name: 'Пехота',        short: 'ПЕХ', att: 1.0, def: 1.3, org: 60, speed: 1.0, pp: 0.4, mp: 1.8, days: 1 },
-  mot:  { name: 'Мотопехота',    short: 'МОТ', att: 1.2, def: 1.2, org: 50, speed: 1.6, pp: 0.8, mp: 1.8, days: 2 },
-  tank: { name: 'Танки',         short: 'ТНК', att: 3.0, def: 1.0, org: 30, speed: 1.5, pp: 1.2, mp: 1.0, days: 3, armor: true },
-  art:  { name: 'Артиллерия',    short: 'АРТ', att: 2.0, def: 0.6, org: 20, speed: 1.5, pp: 0.8, mp: 0.8, days: 2 },
-  at:   { name: 'ПТ-артиллерия', short: 'ПТО', att: 0.6, def: 1.6, org: 20, speed: 1.5, pp: 0.7, mp: 0.8, days: 2, antiArmor: true }
+  inf:  { name: 'Пехота',            short: 'ПЕХ',  att: 1.0, def: 1.3, org: 60, speed: 1.0, pp: 0.4, mp: 1.8, days: 1 },
+  mot:  { name: 'Мотострелки на БМП', short: 'МСБ',  att: 1.2, def: 1.2, org: 50, speed: 1.6, pp: 0.8, mp: 1.8, days: 2 },
+  tank: { name: 'Танки',             short: 'ТНК',  att: 3.0, def: 1.0, org: 30, speed: 1.5, pp: 1.2, mp: 1.0, days: 3, armor: true },
+  art:  { name: 'Артиллерия и РСЗО', short: 'АРТ',  att: 2.0, def: 0.6, org: 20, speed: 1.5, pp: 0.8, mp: 0.8, days: 2 },
+  at:   { name: 'ПТРК',              short: 'ПТРК', att: 0.6, def: 1.6, org: 20, speed: 1.5, pp: 0.7, mp: 0.8, days: 2, antiArmor: true }
 };
 const TEMPLATE_MAX_BATS = 10;
 const TEMPLATE_MAX = 8;
-// Стартовые шаблоны: [название СССР, США, Рейха], состав
+// Стартовые шаблоны: названия у России, США и Китая, состав
 const START_TEMPLATES = [
-  { names: { SOV: 'Стрелковая дивизия', WST: 'Пехотная дивизия', AXS: 'Пехотная дивизия' }, bats: { inf: 7, art: 2 } },
-  { names: { SOV: 'Танковая дивизия', WST: 'Бронетанковая дивизия', AXS: 'Панцер-дивизия' }, bats: { tank: 4, mot: 4, art: 1 } },
-  { names: { SOV: 'Мотострелковая дивизия', WST: 'Механизированная дивизия', AXS: 'Панцергренадерская дивизия' }, bats: { mot: 6, art: 2, at: 1 } }
+  { names: { SOV: 'Общевойсковая дивизия', WST: 'Пехотная дивизия', AXS: 'Общевойсковая дивизия НОАК' }, bats: { inf: 7, art: 2 } },
+  { names: { SOV: 'Танковая дивизия', WST: 'Бронетанковая дивизия', AXS: 'Тяжёлая общевойсковая дивизия' }, bats: { tank: 4, mot: 4, art: 1 } },
+  { names: { SOV: 'Мотострелковая дивизия', WST: 'Дивизия «Страйкер»', AXS: 'Механизированная дивизия' }, bats: { mot: 6, art: 2, at: 1 } }
 ];
 
 /* ---------------- ДЕРЖАВЫ (за них играют люди) ----------------
-   Блок, который никто не выбрал, остаётся под управлением ИИ как обычные страны. */
+   Блок, который никто не выбрал, остаётся под управлением ИИ как обычные страны.
+   leader/title — лидер на старте; дальше власть может смениться (выборы, фокусы, перевороты),
+   актуального лидера даёт Game.leaderOf(тег). */
 const POWERS = {
   SOV: {
-    name: 'СССР', faction: 'SOV', allyFaction: 'COM', family: ['SOV', 'COM'],
-    color: '#c8141e', side: '#5c0a0f', stroke: '#ff8a7a', emblem: 'i-star-emblem',
-    capital: 'RUS', capitalPos: { lat: 55.75, lng: 37.62 }, capitalName: 'Москва', start: USSR_CORE,
-    rivals: ['USA', 'DEU'], pov: { lat: 48, lng: 55 },
-    leader: 'Аркадий Громов', initials: 'АГ', title: 'Генеральный секретарь ЦК', trait: '«Стальной инженер»',
-    bio: 'Бывший инженер-танкист и герой Курской дуги. Неожиданный выбор Президиума — технократ, верящий в машины больше, чем в лозунги.',
-    allyName: 'Коминтерн', mp: 1500, divs: 30,
-    armies: [{ name: '1-я ударная армия', divs: 10, tanks: 3, loc: 'UKR' }, { name: '2-я гвардейская армия', divs: 8, loc: 'BLR' }, { name: 'Дальневосточная армия', divs: 6, loc: 'RUS' }],
-    generals: ['Жуков-младший', 'Рокоссовская', 'Черняхов', 'Ватутин', 'Баграмов', 'Конев-Северный', 'Малинов', 'Катуков', 'Ротмистров', 'Чуйков']
+    name: 'Россия', faction: 'SOV', allyFaction: 'COM', family: ['SOV', 'COM'],
+    color: '#b3121f', side: '#4d070c', stroke: '#ff8a7a', emblem: 'i-star-emblem',
+    capital: 'RUS', capitalPos: { lat: 55.75, lng: 37.62 }, capitalName: 'Москва', start: ['RUS'],
+    rivals: ['USA', 'CHN'], pov: { lat: 52, lng: 60 },
+    leader: 'Владимир Путин', title: 'Президент России',
+    allyName: 'ОДКБ', mp: 1500, divs: 34, techs: ['nuc1', 'nuc2', 'arm1'],
+    spirits: [{ id: 'sanctions', name: 'Санкции Запада', fx: { pp: -0.3, rp: -0.05 }, days: 720, desc: 'Ограничения на кредиты и технологии после 2014 года.' }],
+    armies: [{ name: '1-я гвардейская танковая армия', divs: 10, tanks: 4, loc: 'RUS' }, { name: '20-я гвардейская армия', divs: 8, loc: 'RUS' },
+      { name: '58-я армия', divs: 6, loc: 'RUS' }, { name: '5-я армия', divs: 5, loc: 'RUS' }],
+    generals: ['Валерий Герасимов', 'Александр Дворников', 'Сергей Суровикин', 'Андрей Сердюков', 'Андрей Картаполов',
+      'Олег Салюков', 'Александр Журавлёв', 'Сергей Рудской', 'Александр Лапин', 'Рустам Мурадов']
   },
   WST: {
     name: 'США', faction: 'WEST', allyFaction: 'WEST', family: ['WEST'],
     color: '#1747c9', side: '#0b1f55', stroke: '#9cc2ff', emblem: 'i-emblem-west',
     capital: 'USA', capitalPos: { lat: 38.9, lng: -77.04 }, capitalName: 'Вашингтон', start: ['USA'],
-    rivals: ['RUS', 'DEU'], pov: { lat: 40, lng: -60 },
-    leader: 'Гарольд Стэнтон', initials: 'ГС', title: 'Президент США', trait: '«Арсенал демократии»',
-    bio: 'Генерал инженерных войск, строивший мосты через Рейн. Избран на волне страха перед Москвой и Берлином.',
-    allyName: 'Западный блок', mp: 1300, divs: 0,
-    armies: [{ name: '1-я армия США', divs: 12, tanks: 3, loc: 'USA' }, { name: 'Тихоокеанская армия', divs: 10, loc: 'USA' }],
-    generals: ['Брэдли-мл.', 'Риджуэй', 'Абрамс', 'Гейвин', 'Тейлор', 'Кларк', 'Ван Флит', 'Уэстморленд', 'Макгрудер', 'Хардинг']
+    rivals: ['RUS', 'CHN'], pov: { lat: 40, lng: -60 },
+    leader: 'Дональд Трамп', title: 'Президент США',
+    allyName: 'НАТО', mp: 1300, divs: 0, techs: ['nuc1', 'nuc2', 'ind1', 'arm1'],
+    spirits: [{ id: 'polarization', name: 'Поляризация общества', fx: { pp: -0.2 }, days: 720, desc: 'Страна расколота пополам: каждое решение даётся с боем.' }],
+    armies: [{ name: 'III корпус', divs: 12, tanks: 4, loc: 'USA' }, { name: 'XVIII воздушно-десантный корпус', divs: 10, loc: 'USA' },
+      { name: 'I корпус', divs: 6, loc: 'USA' }],
+    generals: ['Марк Милли', 'Кёртис Скапаротти', 'Тони Томас', 'Стивен Таунсенд', 'Роберт Абрамс', 'Пол Накасоне',
+      'Майкл Гарретт', 'Джозеф Вотел', 'Кеннет Маккензи', 'Кристофер Каволи']
   },
   AXS: {
-    name: 'Германский Рейх', faction: 'AXIS', allyFaction: 'AXIS', family: ['AXIS'],
-    color: '#22252b', side: '#0d0e10', stroke: '#c9ced6', emblem: 'i-emblem-axis',
-    capital: 'DEU', capitalPos: { lat: 52.52, lng: 13.4 }, capitalName: 'Берлин', start: ['DEU', 'AUT'],
-    rivals: ['RUS', 'USA'], pov: { lat: 48, lng: 15 },
-    leader: 'Конрад фон Ведель', initials: 'КВ', title: 'Рейхсканцлер', trait: '«Технократ»',
-    bio: 'Генерал-инженер, возглавивший хунту после сепаратного мира 1945-го. Мечтает вернуть Рейху утраченное величие.',
-    allyName: 'Пакт Оси', mp: 1000, divs: 0,
-    armies: [{ name: '1-я танковая армия', divs: 12, tanks: 5, loc: 'DEU' }, { name: 'Восточная армия', divs: 10, loc: 'DEU' }, { name: 'Альпийская армия', divs: 6, loc: 'AUT' }],
-    generals: ['фон Хассель', 'Рейнхардт', 'фон Штейн', 'Кессельринг-мл.', 'Бальк', 'фон Мантойфель', 'Хейнрици', 'Шёрнер-мл.', 'Модель-мл.', 'Гудериан-мл.']
+    name: 'Китай', faction: 'AXIS', allyFaction: 'AXIS', family: ['AXIS'],
+    color: '#d99a00', side: '#4f3700', stroke: '#ffd97a', emblem: 'i-emblem-axis',
+    capital: 'CHN', capitalPos: { lat: 39.9, lng: 116.4 }, capitalName: 'Пекин', start: ['CHN'],
+    rivals: ['USA', 'RUS'], pov: { lat: 32, lng: 105 },
+    leader: 'Си Цзиньпин', title: 'Председатель КНР',
+    allyName: 'Пояс и путь', mp: 2600, divs: 0, techs: ['nuc1', 'ind1'],
+    spirits: [{ id: 'aging', name: 'Старение населения', fx: { mpMult: -0.15 }, days: 1095, desc: 'Последствия политики «одна семья — один ребёнок».' }],
+    armies: [{ name: 'Восточный театр', divs: 14, tanks: 4, loc: 'CHN' }, { name: 'Северный театр', divs: 12, tanks: 3, loc: 'CHN' },
+      { name: 'Западный театр', divs: 8, loc: 'CHN' }, { name: 'Южный театр', divs: 6, loc: 'CHN' }],
+    generals: ['Хань Вэйго', 'Ли Цзопэн', 'Сюй Цилян', 'Чжан Юся', 'Вэй Фэнхэ', 'Ли Шанфу', 'Хэ Вэйдун', 'Чжао Цзунци',
+      'Ван Нин', 'Лю Юэцзюнь']
   }
 };
 const POWER_TAGS = Object.keys(POWERS);
 
-// Названия веток, технологий и фокусов для США и Рейха (у СССР — исходные)
+// Названия веток и технологий для США и Китая (у России — исходные)
 const BRANCH_NAMES = {
-  WST: { industry: 'Арсенал демократии', armor: 'Тяжёлые танки прорыва', nuclear: 'Манхэттенский проект II' },
-  AXS: { industry: 'Рурская индустрия', armor: 'Панцерваффе нового поколения', nuclear: 'Урановый проект' }
+  WST: { industry: 'Экономика инноваций', armor: 'Армия будущего', nuclear: 'Ядерная триада США' },
+  AXS: { industry: 'Сделано в Китае', armor: 'Интеллектуализация НОАК', nuclear: 'Ракетные войска НОАК' }
 };
 const TECH_NAMES = {
-  WST: { ind1: 'Конверсия гражданских заводов', ind2: 'Конвейеры Детройта', ind3: 'Автоматизация производства', ind4: 'Электронные вычислительные центры',
-    arm1: 'M48 «Паттон»', arm2: 'Тяжёлый танк T43', arm3: 'Штурмовой танк T95', arm4: 'Бронетанковые корпуса прорыва',
-    nuc1: 'Обогащение урана в Ок-Ридже', nuc2: 'Реакторы Хэнфорда', nuc3: 'Компактный заряд Mk-7', nuc4: 'Ракета «Атлас»', nuc5: 'Термоядерный заряд «Касл»' },
-  AXS: { ind1: 'Рурские станкостроительные заводы', ind2: 'Конвейеры Вольфсбурга', ind3: 'Министерство вооружений: автоматизация', ind4: 'Электромеханические вычислители',
-    arm1: '«Пантера II»', arm2: '«Тигр III»', arm3: 'Сверхтяжёлый танк «Маус II»', arm4: 'Танковые армии прорыва',
-    nuc1: 'Урановая машина', nuc2: 'Тяжеловодный реактор', nuc3: 'Изделие «Вундерваффе»', nuc4: 'Ракета A-10 «Америка»', nuc5: 'Термоядерный заряд «Сумерки богов»' }
+  WST: { ind1: 'Облачные вычисления', ind2: 'Возвращение производств', ind3: 'Искусственный интеллект', ind4: 'Квантовое превосходство',
+    arm1: 'M1A2C «Абрамс»', arm2: 'Программа OMFV', arm3: 'Рои беспилотников', arm4: 'Многодоменные операции',
+    nuc1: 'Модернизация триады', nuc2: 'Космический эшелон SBIRS', nuc3: 'Обзор ядерной политики', nuc4: 'МБР «Сентинел»', nuc5: 'Гиперзвуковое оружие LRHW' },
+  AXS: { ind1: 'Интернет плюс', ind2: 'Умные заводы', ind3: 'План развития ИИ', ind4: 'Квантовый спутник «Мо-цзы»',
+    arm1: 'Танк «Тип 99А»', arm2: 'Колёсная бронетехника нового поколения', arm3: 'Беспилотники «Вин Лун»', arm4: 'Интеллектуализированная война',
+    nuc1: 'Расширение арсенала', nuc2: 'Шахтные поля в пустыне Гоби', nuc3: 'Стратегия активной обороны', nuc4: 'МБР «Дунфэн-41»', nuc5: 'Гиперзвуковой «Дунфэн-17»' }
 };
-
-
-/* ---------------- СОБЫТИЯ ----------------
-   date — событие наступит не раньше этой даты (если выполнено условие cond)
-   weight — участвует в случайном розыгрыше
-   art — иконка на «иллюстрации» события
-*/
-const EVENTS = [
-  {
-    id: 'korea_armistice', date: '1953-07-27', art: 'i-flag', cat: 'dip',
-    cond: () => Game.isIndependent('PRK') && Game.isIndependent('KOR'),
-    title: 'Перемирие в Корее',
-    text: 'В Пханмунджоме представители КНДР, Китая и войск ООН готовы подписать перемирие. Генштаб докладывает: возобновить войну можно в любой момент — но Вашингтон ждёт именно этого.',
-    options: [
-      { label: 'Подписать перемирие', tip: 'Напряжённость −5 · +15 ПВ', fx: () => { Game.addTension(-5); Game.addPP(15); } },
-      { label: 'Сорвать переговоры', tip: 'Напряжённость +6 · КНДР +6 дивизий · повод для войны с Южной Кореей',
-        fx: () => { Game.addTension(6); Game.c('PRK').divs += 6; const k = Game.c('KOR'); if (k && !Game.atWar(k)) k.cb[Game.cur] = true; Bus.emit('mapDirty'); } }
-    ]
-  },
-  {
-    id: 'castle_bravo', date: '1954-03-01', art: 'i-nuke', cat: 'alert',
-    title: 'Операция «Касл Браво»',
-    text: 'На атолле Бикини американцы взорвали термоядерное устройство мощностью 15 мегатонн. Радиоактивный пепел накрыл японскую шхуну. Курчатов просит у Политбюро новых ресурсов.',
-    options: [
-      { label: 'Ускорить Лабораторию №2', tip: '−25 ПВ · ускорить атомные исследования на 20 дней (или +80 ОИ)',
-        fx: () => { Game.addPP(-25); if (!Game.boostResearch('nuclear', 20)) Game.addRP(80); } },
-      { label: 'Призвать к мораторию', tip: 'Напряжённость −6 · +5 ПВ', fx: () => { Game.addTension(-6); Game.addPP(5); } }
-    ]
-  },
-  {
-    id: 'geneva', date: '1955-07-18', art: 'i-flag', cat: 'dip',
-    title: 'Женевское совещание',
-    text: 'Лидеры Запада впервые садятся за один стол с советской делегацией. Президент США предлагает «открытое небо». Что ответит Громов?',
-    options: [
-      { label: 'Протянуть руку Западу', tip: 'Напряжённость −8 · разведданные по Западному блоку +20',
-        fx: () => { Game.addTension(-8); Game.eachCountry(c => { if (c.faction === 'WEST') c.intel[Game.cur] = Math.min(100, Game.intel(c) + 20); }); } },
-      { label: 'Продемонстрировать силу', tip: 'Напряжённость +4 · +30 ПВ', fx: () => { Game.addTension(4); Game.addPP(30); } }
-    ]
-  },
-  {
-    id: 'hungary', date: '1956-10-23', art: 'i-swords', cat: 'alert',
-    cond: () => Game.isIndependent('HUN') && Game.c('HUN').faction === 'AXIS',
-    title: 'Будапештское восстание',
-    text: 'Студенты и рабочие Будапешта поднялись против прогерманского режима. Рейх перебрасывает войска к Дунаю. Венгерские коммунисты просят оружия.',
-    options: [
-      { label: 'Поддержать восставших оружием', tip: '−30 ПВ · напряжённость +6 · 60%: Венгрия вступает в Коминтерн',
-        fx: () => {
-          Game.addPP(-30); Game.addTension(6);
-          const h = Game.c('HUN');
-          if (U.chance(0.6)) { Game.setFaction('HUN', 'COM'); Game.log('success', 'Венгрия свободна', 'Восставшие взяли власть. Венгрия вступает в Коминтерн.', 'HUN'); }
-          else { h.divs *= 0.6; h.cb[Game.cur] = true; Game.log('alert', 'Восстание подавлено', 'Войска Рейха утопили восстание в крови. Повод для войны с Венгрией получен.', 'HUN'); }
-        } },
-      { label: 'Не вмешиваться', tip: '+10 ПВ', fx: () => Game.addPP(10) }
-    ]
-  },
-  {
-    id: 'suez', date: '1956-10-29', art: 'i-globe', cat: 'dip',
-    cond: () => Game.isIndependent('EGY') && Game.c('EGY').faction === 'NEU',
-    title: 'Суэцкий кризис',
-    text: 'Насер национализировал Суэцкий канал. Британские и французские десантники высаживаются в Порт-Саиде. Каир ждёт слова Москвы.',
-    options: [
-      { label: 'Пригрозить Лондону и Парижу', tip: 'Напряжённость +7 · Египет вступает в Коминтерн',
-        fx: () => { Game.addTension(7); Game.setFaction('EGY', 'COM'); } },
-      { label: 'Сохранить нейтралитет', tip: '+15 ПВ · напряжённость −2', fx: () => { Game.addPP(15); Game.addTension(-2); } }
-    ]
-  },
-  {
-    id: 'cuba', date: '1959-01-01', art: 'i-flag', cat: 'dip',
-    cond: () => Game.isIndependent('CUB') && Game.c('CUB').faction === 'NEU',
-    title: 'Революция на Кубе',
-    text: 'Барбудос Фиделя Кастро вошли в Гавану. Новое правительство ищет друзей — в девяноста милях от Флориды.',
-    options: [
-      { label: 'Признать правительство Кастро', tip: 'Куба вступает в Коминтерн · напряжённость +5',
-        fx: () => { Game.setFaction('CUB', 'COM'); Game.addTension(5); } },
-      { label: 'Не вмешиваться', tip: '+10 ПВ', fx: () => Game.addPP(10) }
-    ]
-  },
-  {
-    id: 'caribbean', date: '1962-10-16', art: 'i-nuke', cat: 'alert',
-    cond: () => Game.c('CUB') && Game.c('CUB').faction === 'COM' && Game.isIndependent('USA'),
-    title: 'Карибский кризис',
-    text: 'Самолёт-разведчик U-2 сфотографировал на Кубе стартовые позиции ракет. Флот США блокирует остров. Мир на грани.',
-    options: [
-      { label: 'Не отступать', tip: 'Напряжённость +18 · +80 ПВ · 30%: США объявляют войну',
-        fx: () => { Game.addTension(18); Game.addPP(80); if (U.chance(0.3)) Game.aiDeclareWar('USA', Game.cur, 'Карибский кризис перерос в войну'); } },
-      { label: 'Пойти на компромисс', tip: 'Напряжённость −15 · +20 ПВ', fx: () => { Game.addTension(-15); Game.addPP(20); } }
-    ]
-  },
-
-  /* --- Случайные события --- */
-  {
-    id: 'harvest', weight: 3, art: 'i-factory', cat: 'info',
-    title: 'Неурожай на целинных землях',
-    text: 'Засуха погубила урожай в Казахстане и на Алтае. Госплан докладывает о нехватке зерна.',
-    options: [
-      { label: 'Закупить зерно за границей', tip: '−20 ПВ', fx: () => Game.addPP(-20) },
-      { label: 'Затянуть пояса', tip: '−120 тыс. призывников', fx: () => Game.addMP(-120) }
-    ]
-  },
-  {
-    id: 'defector', weight: 2, art: 'i-eye', cat: 'intel',
-    cond: () => Game.isIndependent('USA'),
-    title: 'Перебежчик из ЦРУ',
-    text: 'Сотрудник резидентуры ЦРУ в Вене попросил политического убежища. У него с собой микрофильмы.',
-    options: [
-      { label: 'Выжать всё до капли', tip: 'Полные разведданные по США · Западный блок +25 разведданных',
-        fx: () => { Game.eachCountry(c => { if (c.faction === 'WEST') c.intel[Game.cur] = Math.min(100, Game.intel(c) + 25); }); Game.c('USA').intel[Game.cur] = 100; } },
-      { label: 'Обменять на наших агентов', tip: 'Напряжённость −4 · +10 ПВ', fx: () => { Game.addTension(-4); Game.addPP(10); } }
-    ]
-  },
-  {
-    id: 'strikes', weight: 2, art: 'i-flag', cat: 'dip',
-    cond: () => Game.isIndependent('FRA') || Game.isIndependent('ITA'),
-    title: 'Забастовки в Западной Европе',
-    text: 'Профсоюзы Франции и Италии вывели на улицы миллионы рабочих. Местные компартии просят поддержки.',
-    options: [
-      { label: 'Финансировать компартии', tip: '−20 ПВ · Франция и Италия: −15% дивизий и саботаж · напряжённость +2',
-        fx: () => {
-          Game.addPP(-20); Game.addTension(2);
-          ['FRA', 'ITA'].forEach(id => { const c = Game.c(id); if (c && c.ctrl === id) { c.divs *= 0.85; Game.applySabotage(c, 0.1, 30); } });
-        } },
-      { label: 'Не вмешиваться', tip: '+8 ПВ', fx: () => Game.addPP(8) }
-    ]
-  },
-  {
-    id: 'academy', weight: 3, art: 'i-rp', cat: 'sci',
-    title: 'Прорыв в Академии наук',
-    text: 'Новосибирские физики добились результата, который опережает западные лаборатории на годы.',
-    options: [
-      { label: 'Направить в оборонку', tip: '+60 ОИ', fx: () => Game.addRP(60) },
-      { label: 'Направить в промышленность', tip: '+2 завода', fx: () => Game.addFactories(2) }
-    ]
-  },
-  {
-    id: 'axis_drills', weight: 2, art: 'i-div', cat: 'mil',
-    cond: () => Game.isIndependent('DEU') && Game.c('DEU').faction === 'AXIS' && !Game.atWar(Game.c('DEU')),
-    title: 'Учения Оси у границ',
-    text: 'Панцерваффе Рейха проводят крупнейшие с 1944 года манёвры у польской границы.',
-    options: [
-      { label: 'Ответные манёвры', tip: 'Германия +3 дивизии · организация армии 100% · напряжённость +3',
-        fx: () => { Game.c('DEU').divs += 3; Game.setArmyOrg(100); Game.addTension(3); } },
-      { label: 'Дипломатический протест', tip: 'Германия +3 дивизии · +8 ПВ', fx: () => { Game.c('DEU').divs += 3; Game.addPP(8); } }
-    ]
-  },
-  {
-    id: 'volunteers', weight: 2, art: 'i-mp', cat: 'mil',
-    cond: () => Game.c('CHN') && Game.c('CHN').faction === 'COM',
-    title: 'Добровольцы из Китая',
-    text: 'Пекин предлагает направить в распоряжение советского командования корпус народных добровольцев.',
-    options: [
-      { label: 'Принять добровольцев', tip: '+4 дивизии · напряжённость +1', fx: () => { Game.addDivs(4); Game.addTension(1); } },
-      { label: 'Направить их на стройки', tip: '+2 завода', fx: () => Game.addFactories(2) }
-    ]
-  },
-  {
-    id: 'uprising', weight: 3, art: 'i-swords', cat: 'alert',
-    cond: () => Game.annexedLands().length > 0,
-    title: 'Волнения на присоединённых землях',
-    setup: () => ({ target: U.pick(Game.annexedLands()).id }),
-    text: ctx => `В ${Game.c(ctx.target).name} вспыхнули беспорядки. Подпольщики жгут склады и нападают на патрули.`,
-    options: [
-      { label: 'Ввести войска', tip: '−2 дивизии', fx: () => Game.addDivs(-2) },
-      { label: 'Объявить амнистию', tip: '−25 ПВ', fx: () => Game.addPP(-25) },
-      { label: 'Игнорировать', tip: 'Регион теряет 30% заводов',
-        fx: ctx => { const c = Game.c(ctx.target); c.factories = Math.floor(c.factories * 0.7); } }
-    ]
-  },
-  {
-    id: 'spy_scandal', weight: 2, art: 'i-eye', cat: 'intel',
-    cond: () => Game.P().stats.spyOk + Game.P().stats.spyFail >= 3,
-    title: 'Шпионский скандал',
-    text: 'Западная пресса публикует имена советских агентов. Посольства требуют объяснений.',
-    options: [
-      { label: 'Отрицать всё', tip: 'Напряжённость +3', fx: () => Game.addTension(3) },
-      { label: 'Пожертвовать резидентурой', tip: '−15 ПВ · напряжённость −2', fx: () => { Game.addPP(-15); Game.addTension(-2); } }
-    ]
-  },
-  {
-    id: 'oil', weight: 2, art: 'i-factory', cat: 'success',
-    title: 'Нефть Татарии',
-    text: 'Геологи открыли гигантское Ромашкинское месторождение. «Второе Баку» даст топливо армии и заводам.',
-    options: [{ label: 'Слава советским геологам!', tip: '+2 завода · +10 ПВ', fx: () => { Game.addFactories(2); Game.addPP(10); } }]
-  },
-  {
-    id: 'nonaligned', weight: 2, art: 'i-globe', cat: 'dip',
-    cond: () => Game.isIndependent('IND') && Game.c('IND').faction === 'NEU',
-    title: 'Движение неприсоединения',
-    text: 'Неру, Насер и Тито провозглашают «третий путь». Индия колеблется.',
-    options: [
-      { label: 'Поддержать Неру', tip: '−15 ПВ · 35%: Индия вступает в Коминтерн',
-        fx: () => { Game.addPP(-15); Game.c('IND').intel[Game.cur] = Math.min(100, Game.intel(Game.c('IND')) + 30); if (U.chance(0.35)) Game.setFaction('IND', 'COM'); } },
-      { label: 'Игнорировать', tip: '+5 ПВ', fx: () => Game.addPP(5) }
-    ]
-  },
-  {
-    id: 'reich_crisis', weight: 1, art: 'i-flag', cat: 'intel',
-    cond: () => Game.isIndependent('DEU') && Game.c('DEU').faction === 'AXIS' && !Game.atWar(Game.c('DEU')),
-    title: 'Кризис наследования в Рейхе',
-    text: 'Старый фельдмаршал при смерти. Генералы делят власть, а МГБ имеет выходы на заговорщиков.',
-    options: [
-      { label: 'Поддержать заговорщиков', tip: '−30 ПВ · Германия −25% дивизий и саботаж обороны',
-        fx: () => { Game.addPP(-30); const d = Game.c('DEU'); d.divs *= 0.75; Game.applySabotage(d, 0.2, 60); } },
-      { label: 'Выждать', tip: '+5 ПВ', fx: () => Game.addPP(5) }
-    ]
-  },
-  {
-    id: 'marshall', weight: 1, art: 'i-factory', cat: 'info',
-    cond: () => Game.S.tension >= 40 && Game.isIndependent('USA'),
-    title: 'План Маршалла-2',
-    text: 'Конгресс США одобрил гигантскую программу перевооружения союзников.',
-    options: [{ label: 'Осудить «империалистов»', tip: 'Западный блок +1 завод в каждой стране · +10 ПВ',
-      fx: () => { Game.eachCountry(c => { if (c.faction === 'WEST' && c.ctrl === c.id && !c.radioactive) c.factories += 1; }); Game.addPP(10); } }]
-  },
-
-  /* --- События США (powers: ['WST']) --- */
-  {
-    id: 'w_mccarthy', powers: ['WST'], weight: 2, art: 'i-eye', cat: 'intel',
-    title: 'Комиссия по антиамериканской деятельности',
-    text: 'Сенатор требует проверить на лояльность всех сотрудников Госдепартамента. Газеты ищут «красных» под каждой кроватью.',
-    options: [
-      { label: 'Поддержать проверки', tip: '+20 ПВ · напряжённость +2', fx: () => { Game.addPP(20); Game.addTension(2); } },
-      { label: 'Остановить истерию', tip: '−10 ПВ · напряжённость −3', fx: () => { Game.addPP(-10); Game.addTension(-3); } }
-    ]
-  },
-  {
-    id: 'w_highways', powers: ['WST'], weight: 2, art: 'i-factory', cat: 'success',
-    title: 'Система межштатных автострад',
-    text: 'Конгресс одобрил строительство сети скоростных дорог — для экономики и для переброски войск.',
-    options: [
-      { label: 'Строить для экономики', tip: '+3 завода', fx: () => Game.addFactories(3) },
-      { label: 'Строить для армии', tip: 'Организация всех армий 100% · +20 ПВ', fx: () => { Game.setArmyOrg(100); Game.addPP(20); } }
-    ]
-  },
-  {
-    id: 'w_retaliation', powers: ['WST'], weight: 1, art: 'i-nuke', cat: 'alert',
-    title: 'Доктрина массированного возмездия',
-    text: 'Госсекретарь предлагает объявить: на любую агрессию США ответят ударом по местам и средствами по своему выбору.',
-    options: [
-      { label: 'Объявить доктрину', tip: '+60 ОИ · напряжённость +5', fx: () => { Game.addRP(60); Game.addTension(5); } },
-      { label: 'Сохранить двусмысленность', tip: '+15 ПВ', fx: () => Game.addPP(15) }
-    ]
-  },
-
-  /* --- События Рейха (powers: ['AXS']) --- */
-  {
-    id: 'a_ruhr', powers: ['AXS'], weight: 2, art: 'i-factory', cat: 'success',
-    title: 'Рурское экономическое чудо',
-    text: 'Восстановленные шахты и домны Рура работают в три смены. Промышленники требуют государственных заказов.',
-    options: [
-      { label: 'Военные заказы', tip: '+2 завода · +2 дивизии', fx: () => { Game.addFactories(2); Game.addDivs(2); } },
-      { label: 'Гражданская экономика', tip: '+4 завода', fx: () => Game.addFactories(4) }
-    ]
-  },
-  {
-    id: 'a_vienna', powers: ['AXS'], weight: 2, art: 'i-flag', cat: 'alert',
-    title: 'Волнения в Вене',
-    text: 'Австрийские студенты требуют автономии. Гауляйтер просит прислать войска.',
-    options: [
-      { label: 'Ввести войска', tip: '−2 дивизии · напряжённость +1', fx: () => { Game.addDivs(-2); Game.addTension(1); } },
-      { label: 'Пойти на уступки', tip: '−20 ПВ', fx: () => Game.addPP(-20) }
-    ]
-  },
-  {
-    id: 'a_scientists', powers: ['AXS'], weight: 1, art: 'i-rp', cat: 'sci',
-    title: 'Учёные возвращаются из эмиграции',
-    text: 'Группа физиков, бежавших в 1930-е, согласилась вернуться — за гарантии свободы исследований.',
-    options: [
-      { label: 'Дать гарантии', tip: '+80 ОИ · −15 ПВ', fx: () => { Game.addRP(80); Game.addPP(-15); } },
-      { label: 'Отказать', tip: '+10 ПВ', fx: () => Game.addPP(10) }
-    ]
-  }
-];

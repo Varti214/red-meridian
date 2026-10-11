@@ -9,8 +9,8 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-const LOG_BADGES = { info: 'Сводка', mil: 'Фронт', intel: 'Разведка', dip: 'Дипломатия', sci: 'Наука', alert: 'Тревога', success: 'Успех', nuke: 'Ядерное' };
-const LOG_GROUPS = { mil: ['mil', 'success'], intel: ['intel'], dip: ['dip'], sci: ['sci'], alert: ['alert', 'nuke'] };
+const LOG_BADGES = { info: 'Сводка', mil: 'Фронт', intel: 'Разведка', dip: 'Дипломатия', sci: 'Наука', alert: 'Тревога', success: 'Успех', nuke: 'Ядерное', news: 'Новости' };
+const LOG_GROUPS = { mil: ['mil', 'success'], intel: ['intel'], dip: ['dip'], sci: ['sci'], alert: ['alert', 'nuke'], news: ['news'] };
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V'];
 
 const UI = {
@@ -31,6 +31,9 @@ const UI = {
   mapHoverId: null,
   researchTab: 'research',
   started: false,
+  polSel: null,             // выбранная партия в панели политики: { cid, ide }
+  newsTab: 'all',
+  newsSeen: 0,              // id последней прочитанной новости
 
   me() { return Game.me; },
   P() { return Game.P(Game.me); },
@@ -66,7 +69,7 @@ const UI = {
     // Игра шлёт события и посреди хода ИИ (когда активной державы нет) — поэтому
     // каждый обработчик интерфейса выполняется «от лица» своей державы
     const on = (evt, fn) => Bus.on(evt, (...args) => Game.S ? Game.as(Game.me, () => fn(...args)) : fn(...args));
-    on('log', e => { if (!e.to || e.to === Game.me) this.addLogEntry(e, true); });
+    on('log', e => { if (!e.to || e.to === Game.me) { this.addLogEntry(e, true); if (e.cat === 'news') this.onNews(e); } });
     on('toast', (msg, type) => this.toast(msg, type));
     // Откладываем на следующий такт JS: если одновременно запускается анимация (ядерный удар),
     // она успеет «занять» экран, и событие покажется уже после неё
@@ -101,6 +104,8 @@ const UI = {
   onGameStart() {
     this.sig = {};
     this.unread = 0;
+    this.newsSeen = 0;
+    this.polSel = null;
     this.eventQueue = [];
     this.select(null);
     this.applyNation();
@@ -118,10 +123,18 @@ const UI = {
   applyNation() {
     const d = this.D();
     $('#tb-nation .emblem use').setAttribute('href', '#' + d.emblem);
-    $('#tb-nation .leader-portrait').textContent = d.initials;
     $('#tb-nation .tb-nation-name').textContent = d.name;
-    $('#tb-nation .tb-leader').textContent = d.title.split(' ')[0] + ' ' + d.leader.split(' ').pop();
+    this.updateLeader();
     document.body.dataset.power = Game.me;
+  },
+  updateLeader() {
+    const lead = Game.leaderOf(Game.me), pol = Game.powerGov(Game.me);
+    const key = lead + '|' + (pol && pol.ide);
+    if (this.sig.leader === key) return;
+    this.sig.leader = key;
+    $('#tb-nation .leader-portrait').textContent = Politics.initials(lead);
+    $('#tb-nation .tb-leader').textContent = Game.leaderTitle(Game.me).split(' ')[0] + ' ' + lead;
+    if (pol) $('#tb-nation').style.setProperty('--ic', IDEOLOGIES[pol.ide].color);
   },
 
   setNetStatus(st) {
@@ -162,6 +175,8 @@ const UI = {
       case 'log-collapse': return this.toggleLog();
       case 'map-mode': return this.toggleMapMode();
       case 'templates': return this.openTemplates();
+      case 'news': return this.openNews();
+      case 'map-layer': return this.toggleMapLayer();
       case 'modal-close': return this.closeModal();
     }
   },
@@ -190,6 +205,11 @@ const UI = {
       case 'nuke-plan': return this.openNukePlanner(id);
       case 'research': return run('startResearch', id);
       case 'focus-start': return run('startFocus', id);
+      case 'pol-ide': this.polSel = { cid: id, ide: a.dataset.ide }; this.sig.country = null; this.renderCountry(); Sound.play('click'); return;
+      case 'pol-support': return run('supportParty', id, a.dataset.ide);
+      case 'pol-meddle': return run('meddle', id, a.dataset.ide);
+      case 'pol-coup': return this.confirmCoup(id, a.dataset.ide);
+      case 'news-goto': this.closeModal(); this.select(id, true); return;
     }
   },
 
@@ -224,6 +244,8 @@ const UI = {
     else if (e.code === 'KeyF') this.openResearch('focus');
     else if (e.code === 'KeyM') this.toggleMapMode();
     else if (e.code === 'KeyD') this.openTemplates();
+    else if (e.code === 'KeyN') this.openNews();
+    else if (e.code === 'KeyI') this.toggleMapLayer();
   },
 
   /* ---------------- ВРЕМЯ ---------------- */
@@ -381,6 +403,8 @@ const UI = {
     const freeSlot = P.research.length < 2 && TECHS.some(x => Game.techState(x) === 'available' && P.rp >= Game.techCost(x).rp);
     $('#badge-research').classList.toggle('hidden', !freeSlot);
     $('#badge-research').textContent = '!';
+    this.updateLeader();
+    this.updateNewsBadge();
     const freeFocus = !P.focus && Game.focusTree().some(f => Game.focusState(f) === 'available');
     $('#badge-focus').classList.toggle('hidden', !freeFocus);
     $('#badge-focus').textContent = '!';
@@ -451,7 +475,7 @@ const UI = {
       ...SPY_OPS.map(op => Game.canSpy(c, op))];
     return JSON.stringify([c.id, c.faction, c.ctrl, Game.atWar(c), c.cb[me] === true, !!Game.justifying(c), !!c.influence, !!c.integrate, c.radioactive,
       c.factories, c.fort, Math.round(c.control), Math.round(Game.intel(c) / 5), c.sab, c.sabDays > 0, est.lo, est.hi, Math.round(c.pop / 1e5),
-      reasons, P.divs, P.warheads, Game.S.tension >= 50, Math.round(Game.S.tension / 4), Game.mods.nukes, P.techs.length]);
+      reasons, P.divs, P.warheads, Game.S.tension >= 50, Math.round(Game.S.tension / 4), Game.mods.nukes, P.techs.length, this.polSig(c)]);
   },
 
   badge(text, cls) { return `<span class="bdg bdg-${cls}">${U.esc(text)}</span>`; },
@@ -581,6 +605,7 @@ const UI = {
       if (rival) html += `<div class="cp-note">За эту державу играет человек. Его армия защищает все границы сразу — чем больше у него фронтов, тем слабее каждый участок.</div>`;
     }
 
+    html += this.politicsHTML(c);
     html += this.projectBlock(c, 'justify', 'Обоснование войны');
     html += this.projectBlock(c, 'influence', 'Распространение влияния');
     html += this.projectBlock(c, 'integrate', 'Интеграция в состав державы');
@@ -619,7 +644,8 @@ const UI = {
       }
       if (c.faction === 'NEU' && !war && c.ctrl === c.id) {
         html += this.actBtn({ act: 'influence', id: c.id, label: 'Распространить влияние', icon: 'i-pp', why: Game.canInfluence(c),
-          sub: `${U.days(CFG.INFLUENCE.days)} · шанс ${U.pct(U.clamp(0.75 - S.tension / 250, 0.25, 0.9))} вступления в блок`,
+          sub: `${U.days(CFG.INFLUENCE.days)} · шанс ${U.pct(Game.influenceChance(c))} вступления в блок`,
+          tip: 'Шанс выше, если правящая идеология страны совпадает с нашей.',
           cost: this.costTag(Game.influenceCost()) });
       }
       html += '</div>';
@@ -761,7 +787,7 @@ const UI = {
     if (!this.matchesFilter(e.cat)) node.classList.add('filtered');
     if (animate) node.classList.add('fresh');
     while (list.children.length > 150) list.lastElementChild.remove();
-    if (this.logCollapsed) {
+    if (this.logCollapsed && e.cat !== 'news') {
       this.unread++;
       this.el.logUnread.textContent = this.unread;
       this.el.logUnread.classList.remove('hidden');
@@ -773,7 +799,8 @@ const UI = {
     this.applyLogFilter();
   },
 
-  matchesFilter(cat) { return this.logFilter === 'all' || (LOG_GROUPS[this.logFilter] || []).includes(cat); },
+  // Новости живут в своей вкладке и в окне «Мировые новости» — общий журнал ими не засоряем
+  matchesFilter(cat) { return this.logFilter === 'all' ? cat !== 'news' : (LOG_GROUPS[this.logFilter] || []).includes(cat); },
 
   applyLogFilter() {
     $$('.log-entry', this.el.logList).forEach(n => n.classList.toggle('filtered', !this.matchesFilter(n.dataset.cat)));
@@ -879,7 +906,7 @@ const UI = {
     },
     rp() {
       return `<div class="tt-title">Очки исследований</div>
-        <div class="tt-text">Тратятся на технологии. Растут от заводов. Черта лидера ${U.esc(this.D().trait)} даёт +10%.</div>
+        <div class="tt-text">Тратятся на технологии. Растут от заводов, технологий, фокусов и идеологии власти.</div>
         <div class="tt-grid"><span>Накоплено</span><b>${U.fmt(this.P().rp, 0)}</b><span>Прирост в день</span><b class="pos">${U.signed(Game.dailyRP(), 2)}</b>
         <span>Бонус науки</span><b>+${U.pct(Game.mods.rp)}</b></div>`;
     },
@@ -898,11 +925,16 @@ const UI = {
         <div class="tt-grid">${row(50, 'Оборонительная мобилизация блоков')}${row(75, 'DEFCON 2, блоки вступают в войны')}${row(80, 'Соседи могут напасть первыми')}${row(95, 'Риск ядерного удара США (если ими правит ИИ)')}</div>`;
     },
     leader() {
-      const d = this.D();
-      return `<div class="tt-title">${U.esc(d.leader)}</div>
-        <div class="tt-sub">${U.esc(d.title)} · с 5 марта 1953</div>
-        <div class="tt-text">${U.esc(d.bio)}</div>
-        <div class="tt-grid"><span>Черта</span><b>${U.esc(d.trait)}</b><span>Эффект</span><b class="pos">+10% к очкам исследований</b></div>`;
+      const tag = Game.me, pol = Game.powerGov(tag), P = this.P();
+      if (!pol) return '';
+      const I = IDEOLOGIES[pol.ide], left = Game.electionIn(pol);
+      const spirits = (P.spirits || []).map(x => `<span>${U.esc(x.name)}</span><b>${x.days != null ? U.days(x.days) : 'постоянно'}</b>`).join('');
+      return `<div class="tt-title">${U.esc(Game.leaderOf(tag))}</div>
+        <div class="tt-sub">${U.esc(Game.leaderTitle(tag))} · ${U.esc(I.gov)}</div>
+        <div class="tt-text">Идеология «${I.name}»: ${I.fxText}.</div>
+        <div class="tt-grid"><span>Поддержка власти</span><b>${U.fmt(pol.pop[pol.ide] || 0, 1)}%</b>
+        <span>Выборы</span><b>${left == null ? 'не проводятся' : 'через ' + U.days(left)}</b>${spirits}</div>
+        <div class="tt-hint">Кликните по своей столице, чтобы открыть внутреннюю политику</div>`;
     },
     net() {
       const room = Net.room;
@@ -1053,7 +1085,6 @@ const UI = {
         <li>${Y ? 'Начнётся война между державами.' : 'Территория станет активным фронтом. Противник проведёт мобилизацию (+15% дивизий).'}</li>
         <li class="neg">Мировая напряжённость +${U.fmt(Game.declareTension(c), 0)}%.</li>
         ${warn}
-        ${c.faction === 'AXIS' && Game.me === 'SOV' && !Y ? '<li class="pos">Запад одобряет войну с Осью: рост напряжённости вдвое ниже.</li>' : ''}
       </ul>
       <div class="m-actions"><button class="btn" data-cancel>Отмена</button><button class="btn btn-red" data-go><svg><use href="#i-swords"/></svg>Объявить войну</button></div>`;
     this.openModal({
@@ -1489,20 +1520,22 @@ const UI = {
     const P = this.P();
     const cur = P.focus ? FOCUS_BY_ID[P.focus.id] : null;
     let html = `<div class="rs-head"><div class="rs-rp"><svg><use href="#i-tree"/></svg><span>${cur ? `Выполняется: <b>${U.esc(Game.focusName(cur))}</b>` : 'Фокус не выбран — выберите доступный узел дерева'}</span></div>
-      <div class="rs-hint">Фокусы бесплатны, но выполняются по одному. Во втором ряду выберите курс страны — военный, экономический или экспансии.</div></div>`;
-    html += '<div class="ft-wrap"><div class="ft" id="focus-tree"><svg class="ft-lines"></svg>';
+      <div class="rs-hint">Фокусы бесплатны, но выполняются по одному. Во втором ряду — выбор политического пути: два из трёх приводят к власти другого лидера и меняют идеологию страны.</div></div>`;
+    const tree = Game.focusTree();
+    const mx = Math.max(...tree.map(f => f.x)), my = Math.max(...tree.map(f => f.y));
+    html += `<div class="ft-wrap"><div class="ft" id="focus-tree" style="width:${mx * 134 + 124}px;height:${my * 124 + 108}px"><svg class="ft-lines"></svg>`;
     for (const f of Game.focusTree()) {
       const st = Game.focusState(f), why = Game.canFocus(f);
       html += `<div class="fnode st-${st}${f.path ? ' fnode-path' : ''}" style="--x:${f.x};--y:${f.y}" data-fid="${f.id}" data-tip="${U.esc(f.desc)}">
         ${f.path ? `<div class="fnode-kind">${U.esc(f.path)}</div>` : ''}
         <div class="fnode-name">${U.esc(Game.focusName(f))}</div>
-        <div class="fnode-desc">${U.esc(f.desc)}</div>
+        ${f.fx.gov ? `<div class="fnode-gov" style="--ic:${IDEOLOGIES[f.fx.gov.ide].color}"><i></i>${U.esc(f.fx.gov.leader)} · ${IDEOLOGIES[f.fx.gov.ide].name.toLowerCase()}</div>` : `<div class="fnode-desc">${U.esc(f.desc)}</div>`}
         ${st === 'active' ? `<div class="meter meter-gold"><i data-live="prog" data-k="focus" data-id="${f.id}" style="width:${(1 - P.focus.daysLeft / P.focus.total) * 100}%"></i></div><em class="fnode-days" data-live="days" data-k="focus" data-id="${f.id}">${U.days(P.focus.daysLeft)}</em>` :
           st === 'done' ? '<em class="fnode-days done">Выполнен</em>' :
           `<button class="btn btn-xs ${why ? 'is-disabled' : 'btn-gold'}" data-act="focus-start" data-id="${f.id}" aria-disabled="${!!why}" ${why ? `data-why="${U.esc(why)}" data-tip="${U.esc(why)}"` : ''}>${U.days(f.days)}</button>`}
       </div>`;
     }
-    html += '<div class="ft-excl"><span>⇋</span>Выбор курса: можно взять только один из трёх путей</div></div></div>';
+    html += '<div class="ft-excl"><span>⇋</span>Политический путь: можно выбрать только один из трёх</div></div></div>';
     return html;
   },
 
@@ -1596,7 +1629,9 @@ const UI = {
         <section><h3>Шаблоны дивизий</h3><p>Кнопка «Шаблоны» внизу (или <kbd>D</kbd>) открывает конструктор: соберите дивизию из батальонов — пехоты, мотопехоты, танков, артиллерии и ПТ. Танки сильны в атаке и прорыве, пехота держит оборону и организацию, ПТ гасит танки противника, моторизованные армии маршируют быстрее.</p></section>
         <section><h3>Против человека</h3><p>Армия державы-игрока защищает все её враждебные границы сразу: чем больше у соперника фронтов, тем слабее каждый участок. Мир между людьми заключается только по согласию обоих.</p></section>
         <section><h3>Разведка</h3><p>Без разведданных численность врага видна как диапазон. «Сбор разведданных» уточняет цифры, «Саботаж» снижает оборону до −60%, «Диверсия» уничтожает заводы. Провалы повышают напряжённость.</p></section>
-        <section><h3>Наука и фокусы</h3><p><kbd>R</kbd> — исследования (2 отдела одновременно), <kbd>F</kbd> — национальные фокусы. Ядерная ветка до 4-го уровня открывает ядерный удар: регион навсегда превращается в пустошь без заводов.</p></section>
+        <section><h3>Политика и выборы</h3><p>У каждой страны есть правящая идеология, лидер и популярность партий. В демократиях проходят выборы по реальному календарю, в режимах — управляемые выборы: власть теряет их, только если её поддержка упала ниже 30%. В панели страны можно <b>поддержать партию</b>, <b>вмешаться в выборы</b> (за 180 дней до них) или устроить <b>переворот</b>. Близкие по идеологии страны охотнее вступают в ваш блок. Идеология вашей державы даёт свои бонусы. <kbd>I</kbd> — карта идеологий.</p></section>
+        <section><h3>Новости</h3><p><kbd>N</kbd> — мировые новости: выборы, перевороты, войны, кризисы, а также календарь ближайших выборов. События с выбором приходят по реальным датам 2018–2023 годов и случайно.</p></section>
+        <section><h3>Наука и фокусы</h3><p><kbd>R</kbd> — исследования (2 отдела одновременно), <kbd>F</kbd> — национальные фокусы: во втором ряду дерева выбирается политический путь, он может привести к власти другого человека. Ядерная ветка до 4-го уровня открывает ядерный удар: регион навсегда превращается в пустошь без заводов.</p></section>
         <section><h3>Управление</h3><p>Мышь: вращение глобуса, колесо — масштаб. <kbd>M</kbd> — 3D-глобус / 2D-карта. <kbd>Esc</kbd> — закрыть окно / меню. Одиночная игра сохраняется автоматически каждые 30 дней.</p></section>
       </div>
       <div class="m-actions"><button class="btn btn-gold" data-ok>Понятно</button></div>`;
@@ -1624,9 +1659,9 @@ const UI = {
     const html = `<div class="intro">
       <div class="intro-hero">
         <svg class="intro-emblem"><use href="#i-star-emblem"/></svg>
-        <div class="intro-k">Холодная война · альтернативная история</div>
+        <div class="intro-k">Многополярный мир · с 2018 года</div>
         <h1>КРАСНЫЙ МЕРИДИАН</h1>
-        <p>5 марта 1953 года. После смерти Сталина Президиум ЦК неожиданно избирает Генеральным секретарём <b>Аркадия Громова</b>. Мир расколот натрое: <span class="c-west">Западный блок</span> во главе с США, уцелевший после сепаратного мира 1945-го <span class="c-axis">Германский Рейх</span> с его Пактом Оси — и <span class="c-sov">Советский Союз</span> с союзниками по Коминтерну.</p>
+        <p>1 января 2018 года. <span class="c-west">США</span> защищают привычный мировой порядок, <span class="c-sov">Россия</span> бросает ему вызов, а <span class="c-axis">Китай</span> становится второй экономикой планеты. Впереди выборы, революции, пандемия и войны. Лидеры и события — реальные на начало 2018 года, дальше историю пишете вы: фокусы, выборы и перевороты могут привести к власти других людей и сменить идеологию любой страны.</p>
       </div>
       <div class="intro-tabs"><button class="rs-tab active" data-tab="solo">Одиночная игра</button><button class="rs-tab" data-tab="net">Сетевая игра</button></div>
       <div class="intro-pane" data-pane="solo">
@@ -1776,6 +1811,168 @@ const UI = {
       if (!res.ok) this.toast(res.msg, 'err');
     };
   },
+
+  /* ---------------- ПОЛИТИКА В ПАНЕЛИ СТРАНЫ ---------------- */
+  // Партия, выбранная для действий: по умолчанию — наша идеология (в своей стране — правящая)
+  polIdeFor(c, pol) {
+    if (this.polSel && this.polSel.cid === c.id && IDEOLOGIES[this.polSel.ide]) return this.polSel.ide;
+    return c.ctrl === Game.me ? pol.ide : (Game.powerIde(Game.me) || pol.ide);
+  },
+
+  polSig(c) {
+    const h = Game.govHolder(c), pol = h && h.pol;
+    if (!pol) return null;
+    const ide = this.polIdeFor(c, pol);
+    return [h.id, pol.ide, pol.leader, Object.entries(pol.pop).map(([k, v]) => k + Math.round(v)).join(','), Game.electionIn(pol) != null ? Math.ceil(Game.electionIn(pol) / 5) : -1,
+      pol.sup.filter(x => x.by === Game.me).map(x => x.ide + Math.ceil(x.days / 7)).join(','), ide,
+      Game.canSupport(c, ide), Game.canMeddle(c, ide), Game.canCoup(c, ide), Game.P(Game.me).pp >= CFG.POL.coup];
+  },
+
+  politicsHTML(c) {
+    const me = Game.me, own = c.ctrl === me;
+    const holder = Game.govHolder(c), pol = holder && holder.pol;
+    if (!pol || c.inert) return '';
+    if (own && !Game.isPowerHome(c)) return '';
+    const I = IDEOLOGIES[pol.ide];
+    let h = `<div class="cp-sec cp-pol"><div class="cp-sec-title">Политика</div>`;
+    if (holder !== c) {
+      return h + `<div class="cp-note">Территорией управляет ${U.esc(holder.name)}: ${U.esc(I.gov.toLowerCase())}.</div></div>`;
+    }
+    const title = pol.title || (Game.isPowerHome(c) ? Game.leaderTitle(c.ctrl) : 'Глава власти');
+    h += `<div class="pol-head" style="--ic:${I.color}">
+      <div class="pol-portrait">${U.esc(Politics.initials(pol.leader))}</div>
+      <div class="pol-who"><b>${U.esc(U.cap(Game.leaderLabel(pol)))}</b><span>${U.esc(title)}</span></div>
+      <div class="pol-gov">${U.esc(I.gov)}</div></div>`;
+    const keys = IDE_KEYS.filter(k => (pol.pop[k] || 0) >= 0.5).sort((a, b) => pol.pop[b] - pol.pop[a]);
+    h += `<div class="pol-bar">${keys.map(k => `<i style="width:${pol.pop[k]}%;background:${IDEOLOGIES[k].color}"></i>`).join('')}</div>`;
+    const sel = this.polIdeFor(c, pol);
+    h += `<div class="pol-list">${keys.map(k => {
+      const cand = pol.cands[k] && !(k === pol.ide && pol.cands[k] === pol.leader) ? pol.cands[k] : '';
+      return `<button class="pol-row${k === pol.ide ? ' ruling' : ''}${k === sel ? ' sel' : ''}" data-act="pol-ide" data-id="${c.id}" data-ide="${k}"
+        data-tip="${U.esc(IDEOLOGIES[k].gov + (cand ? '. Кандидат: ' + cand : '') + '. Кликните, чтобы выбрать партию для действий.')}">
+        <i style="background:${IDEOLOGIES[k].color}"></i><span>${IDEOLOGIES[k].name}${k === pol.ide ? ' <small>у власти</small>' : ''}${cand ? ` <em>${U.esc(cand)}</em>` : ''}</span>
+        <b>${U.fmt(pol.pop[k], 1)}%</b></button>`;
+    }).join('')}</div>`;
+    const left = Game.electionIn(pol);
+    h += `<div class="pol-elect"><svg><use href="#i-vote"/></svg><span>${left == null ? 'Выборы не проводятся'
+      : `Выборы: <b>${U.fmtDate(Game.S.date + left * DAY_MS)}</b> · через ${U.days(left)}${pol.managed ? ' · <em>управляемые</em>' : ''}`}</span></div>`;
+    const mine = pol.sup.find(x => x.by === me);
+    if (mine) h += `<div class="pol-note">Наша поддержка партии «${IDEOLOGIES[mine.ide].name}» — ещё ${U.days(mine.days)}.</div>`;
+    const foreign = pol.sup.filter(x => x.by !== me && Game.isPower(x.by));
+    if (foreign.length && (own || Game.intel(c) >= 60)) h += `<div class="pol-note warn">Иностранное вмешательство: ${foreign.map(x => `${POWERS[x.by].name} → «${IDEOLOGIES[x.ide].name}»`).join(', ')}.</div>`;
+
+    // Действия с выбранной партией
+    const S2 = IDEOLOGIES[sel];
+    const label = `<span class="pol-pick" style="--ic:${S2.color}">«${S2.name}»</span>`;
+    h += this.actBtn({ act: 'pol-support', id: c.id, data: `data-ide="${sel}"`, icon: 'i-flag',
+      label: (own ? 'Агитация за ' : 'Поддержать ') + label, why: Game.canSupport(c, sel),
+      sub: `≈+${Math.round(CFG.POL.supportDays / 7 * 1.1 * (own ? 1.4 : 1))}% за ${U.days(CFG.POL.supportDays)}${own ? '' : ' · напряжённость +0,5%'}`, cost: this.costTag(Game.supportCost()),
+      tip: own ? 'Государственные СМИ и активисты работают на выбранную партию.' : 'Деньги, СМИ и консультанты для выбранной партии. Страны, которым мы помогали, охотнее вступают в наш блок.' });
+    if (left != null) {
+      h += this.actBtn({ act: 'pol-meddle', id: c.id, data: `data-ide="${sel}"`, icon: 'i-vote',
+        label: 'Вмешаться в выборы: ' + label, why: Game.canMeddle(c, sel),
+        sub: `+7% сразу · шанс ${U.pct(Game.meddleChance(c))} · провал: −4% и скандал`, cost: this.costTag(CFG.POL.meddle),
+        tip: 'Боты, утечки и «независимые» СМИ в последние месяцы перед выборами.' });
+    }
+    if (!own && !Game.isPower(c.ctrl)) {
+      h += this.actBtn({ act: 'pol-coup', id: c.id, data: `data-ide="${sel}"`, icon: 'i-swords', cls: 'act-danger',
+        label: 'Переворот: ' + label, why: Game.canCoup(c, sel),
+        sub: `Шанс ${U.pct(Game.coupChance(c, sel))} · напряжённость +3–5%`, cost: this.costTag(CFG.POL.coup),
+        tip: 'Военные и политики выбранной партии берут власть. Единомышленники могут сразу вступить в наш блок.' });
+    }
+    return h + '</div>';
+  },
+
+  confirmCoup(id, ide) {
+    const c = Game.c(id), I = IDEOLOGIES[ide];
+    const why = Game.canCoup(c, ide);
+    if (why) return this.result(Game.fail(why));
+    const leader = c.pol.cands[ide];
+    const fit = Politics.affinity(ide, Game.powerIde(Game.me)) === 2;
+    const html = `<div class="mh"><svg><use href="#i-swords"/></svg><div><div class="mh-k">Тайная операция</div><h2>Переворот: ${U.esc(c.name)}</h2></div></div>
+      <ul class="consequences">
+        <li>К власти придёт партия «${I.name}»${leader ? ` — лидер ${U.esc(leader)}` : ''}. Строй: ${I.gov.toLowerCase()}.</li>
+        <li>Шанс успеха: <b>${U.pct(Game.coupChance(c, ide))}</b>. Он выше, если партию поддерживает больше людей.</li>
+        ${fit && c.faction === 'NEU' ? '<li class="pos">Наши единомышленники: 60% — страна сразу вступит в наш блок.</li>' : ''}
+        <li class="neg">Успех: напряжённость +3%. Провал: напряжённость +5%, партия теряет 6%, следующая попытка — через год.</li>
+      </ul>
+      <div class="m-actions"><button class="btn" data-cancel>Отмена</button><button class="btn btn-red" data-go><svg><use href="#i-swords"/></svg>Начать (${CFG.POL.coup} ПВ)</button></div>`;
+    this.openModal({
+      key: 'coup', cls: 'm-small', html,
+      onOpen: (el, m) => {
+        el.querySelector('[data-cancel]').onclick = () => this.closeModal(m);
+        el.querySelector('[data-go]').onclick = () => { this.closeModal(m); Act.call('coup', id, ide).then(res => this.result(res)); };
+      }
+    });
+  },
+
+  /* ---------------- МИРОВЫЕ НОВОСТИ ---------------- */
+  onNews(e) {
+    this.updateNewsBadge();
+    if (this.isOpen('news')) { this.newsSeen = Math.max(this.newsSeen, e.id); this.renderNews(); }
+  },
+  newsList() { return Game.S ? Game.S.log.filter(e => e.cat === 'news') : []; },
+  updateNewsBadge() {
+    const b = document.getElementById('badge-news');
+    if (!b || !Game.S) return;
+    const n = this.newsList().filter(e => e.id > this.newsSeen).length;
+    b.classList.toggle('hidden', !n);
+    b.textContent = n > 99 ? '99+' : n;
+  },
+
+  openNews() {
+    if (!this.started || !Game.S) return;
+    const list = this.newsList();
+    if (list.length) this.newsSeen = Math.max(this.newsSeen, list[0].id);
+    this.updateNewsBadge();
+    if (this.isOpen('news')) return this.renderNews();
+    this.openModal({ key: 'news', cls: 'm-news', html: '<div class="nw"></div>', onOpen: () => this.renderNews() });
+  },
+
+  renderNews() {
+    const el = this.modalEl('news');
+    if (!el || !Game.S) return;
+    const tab = this.newsTab;
+    const tabs = [['all', 'Все новости'], ['elections', 'Выборы и власть'], ['war', 'Войны'], ['calendar', 'Календарь выборов']];
+    let body = '';
+    if (tab === 'calendar') {
+      const rows = Game.list(c => c.pol && !c.inert && (c.ctrl === c.id || Game.isPowerHome(c)) && Game.electionIn(c.pol) != null)
+        .sort((a, b) => a.pol.next - b.pol.next).slice(0, 40);
+      body = rows.length ? `<div class="nw-cal">${rows.map(c => {
+        const pol = c.pol, I = IDEOLOGIES[pol.ide], opp = Object.entries(pol.pop).filter(([k]) => k !== pol.ide).sort((a, b) => b[1] - a[1])[0];
+        const left = Game.electionIn(pol);
+        return `<button class="nw-cal-row${left <= CFG.POL.meddleWindow ? ' soon' : ''}" data-act="news-goto" data-id="${c.id}">
+          <span class="nw-cal-date">${U.fmtDate(Game.S.date + left * DAY_MS)}<em>${left <= CFG.POL.meddleWindow ? 'можно вмешаться' : 'через ' + U.days(left)}</em></span>
+          <b>${U.esc(c.name)}${Game.isPowerHome(c) ? ' <small>держава</small>' : ''}</b>
+          <span class="nw-cal-race"><i style="background:${I.color}"></i>${I.name} ${U.fmt(pol.pop[pol.ide] || 0, 0)}%
+            ${opp ? ` · <i style="background:${IDEOLOGIES[opp[0]].color}"></i>${IDEOLOGIES[opp[0]].name} ${U.fmt(opp[1], 0)}%` : ''}${pol.managed ? ' · <em>управляемые</em>' : ''}</span>
+        </button>`;
+      }).join('')}</div>` : '<div class="nw-empty">В ближайшие годы выборов не ожидается.</div>';
+    } else {
+      const items = this.newsList().filter(e => tab === 'all' || e.k === tab).slice(0, 80);
+      body = items.length ? `<div class="nw-list">${items.map((e, i) => `<article class="nw-item${i === 0 ? ' lead' : ''}${e.k ? ' k-' + e.k : ''}" ${e.cid ? `data-act="news-goto" data-id="${e.cid}"` : ''}>
+          <div class="nw-meta"><span>${U.fmtDate(e.date)}</span>${e.cid && Game.c(e.cid) ? `<em>${U.esc(Game.c(e.cid).name)}</em>` : ''}</div>
+          <h3>${U.esc(e.title)}</h3><p>${U.esc(e.text)}</p></article>`).join('')}</div>`
+        : '<div class="nw-empty">Пока без новостей.</div>';
+    }
+    el.querySelector('.nw').innerHTML = `<div class="nw-mast"><div class="nw-k">${U.fmtDate(Game.S.date)} · выпуск №${Game.S.day + 1}</div><h2>Мировые новости</h2></div>
+      <div class="rs-tabs nw-tabs">${tabs.map(([k, t]) => `<button class="rs-tab${k === tab ? ' active' : ''}" data-ntab="${k}">${t}</button>`).join('')}</div>${body}`;
+    el.querySelectorAll('[data-ntab]').forEach(b => b.onclick = () => { Sound.play('click'); this.newsTab = b.dataset.ntab; this.renderNews(); });
+  },
+
+  /* ---------------- КАРТА ИДЕОЛОГИЙ ---------------- */
+  toggleMapLayer() {
+    if (!Game.S) return;
+    MapView.layer = MapView.layer === 'ide' ? 'bloc' : 'ide';
+    const ide = MapView.layer === 'ide';
+    $('#legend .lg-bloc').classList.toggle('hidden', ide);
+    const box = $('#lg-ide');
+    box.classList.toggle('hidden', !ide);
+    box.innerHTML = IDE_KEYS.map(k => `<div class="lg-row"><i style="--c:${IDEOLOGIES[k].color}"></i>${IDEOLOGIES[k].name}</div>`).join('');
+    $('#btn-map-layer span').textContent = ide ? 'Блоки' : 'Идеологии';
+    MapView.refresh(true);
+  },
+
 
   /* ---------------- КОНЕЦ ИГРЫ ---------------- */
   showGameOver(o) {

@@ -5,6 +5,7 @@
 
 const U = {
   clamp: (v, a, b) => Math.max(a, Math.min(b, v)),
+  cap: s => s ? s[0].toUpperCase() + s.slice(1) : s,
   lerp: (a, b, t) => a + (b - a) * t,
   rand: (a, b) => a + Math.random() * (b - a),
   randi: (a, b) => Math.floor(a + Math.random() * (b - a + 1)),
