@@ -19,13 +19,13 @@ const { WebSocketServer } = require('ws');
 
 const ROOT = path.join(__dirname, '..');
 const PORT = +process.env.PORT || 5085;
-const MAX_PLAYERS = 3;
+const MAX_PLAYERS = 4;
 const ROOM_TTL_MS = 20 * 60 * 1000;   // комната без игроков живёт 20 минут
 const FLUSH_MS = 250;                  // как часто рассылать изменения
 
 /* ---------------- Игровое ядро: один раз компилируем, запускаем в каждой комнате ---------------- */
 const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/combat.js', 'js/ai.js', 'js/game.js',
-  'js/politics.js', 'js/events.js', 'js/autopilot.js'];
+  'js/parties.js', 'js/politics.js', 'js/events.js', 'js/ruua.js', 'js/autopilot.js'];
 const ENGINE_SRC = ENGINE_FILES.map(f => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n;\n')
   + '\n;({ Game, Geo, Bus, POWERS, DIFFICULTY });';
 const ENGINE = new vm.Script(ENGINE_SRC, { filename: 'engine.js' });
@@ -137,7 +137,7 @@ function wireCountry(c) {
 function topState(S) {
   return {
     day: S.day, date: S.date, tension: S.tension, speed: S.speed, paused: S.paused,
-    pwars: S.pwars, over: S.over, victoryShown: S.victoryShown, powers: S.powers, difficulty: S.difficulty
+    pwars: S.pwars, over: S.over, victoryShown: S.victoryShown, powers: S.powers, difficulty: S.difficulty, ruua: S.ruua
   };
 }
 
@@ -350,7 +350,7 @@ wss.on('connection', ws => {
           const room = client.room, p = me();
           if (!room || !p) return reply(rid, { ok: false, msg: 'Вы не в комнате' });
           if (room.api) return reply(rid, { ok: false, msg: 'Игра уже идёт' });
-          if (!['SOV', 'WST', 'AXS'].includes(msg.power)) return reply(rid, { ok: false, msg: 'Нет такой державы' });
+          if (!['SOV', 'WST', 'AXS', 'UA'].includes(msg.power)) return reply(rid, { ok: false, msg: 'Нет такой державы' });
           if (room.players.some(x => x !== p && x.power === msg.power)) return reply(rid, { ok: false, msg: 'Эту державу уже выбрал другой игрок' });
           p.power = msg.power;
           reply(rid, { ok: true });

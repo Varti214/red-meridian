@@ -34,7 +34,10 @@ const Bot = {
     each(/популярность власти ([+−-])(\d+)/g, m => { s += this.sign(m[1]) * this.num(m[2]) * 3; });
     each(/([+−-])(\d+)% (призыва|ОИ)/g, m => { s += this.sign(m[1]) * this.num(m[2]) * 0.8; });
     each(/(\d+)%: [^·]*вступает/g, m => { s += this.num(m[1]) * 0.4; });
-    if (/повод для войны/i.test(tip)) s += 6;
+    if (/повод для войны/i.test(tip)) s += /Украин|Росси/.test(tip) ? -10 : 6;
+    // Автопилот не ищет войны с другой державой-игроком: напряжённость Россия — Украина и войну с ней избегает
+    each(/Россия — Украина ([+−-])(\d+)/g, m => { s -= this.sign(m[1]) * this.num(m[2]) * 0.8; });
+    if (/^Война с /i.test(tip)) s -= 60;
     if (/Талибы приходят|убрать «Старение/i.test(tip)) s += 4;
     return s;
   },
@@ -242,7 +245,7 @@ const Bot = {
     for (const c of cands) {
       const def = Game.estDivs(c).hi * (FACTION_DEF[c.faction] || 1);
       // Члены чужих блоков опаснее: за них вступятся
-      const bloc = ['WEST', 'COM', 'AXIS', 'SOV'].includes(c.faction) ? 2.2 : 1;
+      const bloc = BLOCS.includes(c.faction) ? 2.2 : 1;
       if (mine < def * 3 * bloc + 10) continue;
       const v = (c.factories + 1) / (def * bloc + 3) * (c.major ? 0.6 : 1);
       if (!best || v > best.v) best = { c, v };

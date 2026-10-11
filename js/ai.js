@@ -32,7 +32,7 @@ const AI = {
       const atWar = tags.some(tag => c.wars[tag]);
 
       // Рост гарнизонов
-      const bloc = ['WEST', 'AXIS', 'SOV'].includes(c.faction);
+      const bloc = BLOCS.includes(c.faction) && c.faction !== 'GUAM';
       let rate = c.factories * 0.0025 + 0.004;
       if (t >= 50 && bloc) rate *= 2;
       if (atWar) rate *= 1.6;
@@ -68,7 +68,7 @@ const AI = {
     if (t >= 50 && !F.mob50) {
       F.mob50 = true;
       Game.eachCountry(c => {
-        if (['WEST', 'AXIS', 'SOV'].includes(c.faction) && c.ctrl === c.id && !c.radioactive) {
+        if (BLOCS.includes(c.faction) && c.ctrl === c.id && !c.radioactive) {
           c.divs = c.divs * 1.2 + 1;
           c.fort = Math.min(3, c.fort + 1);
         }
@@ -132,7 +132,7 @@ const AI = {
     for (const X of Game.alive()) {
       if (Game.fronts(X).filter(c => c.ctrl === c.id).length >= 4) continue;   // мир ждёт исхода уже идущих войн
       if (!U.chance(0.004 * Game.diff.aiAggr * (S.tension - 70) / 10)) continue;
-      const hostile = ['WEST', 'AXIS', 'SOV', 'COM'].filter(f => !POWERS[X].family.includes(f));
+      const hostile = BLOCS.filter(f => !POWERS[X].family.includes(f));
       const candidates = Object.values(S.countries).filter(c =>
         hostile.includes(c.faction) && c.ctrl === c.id && !c.wars[X] && !c.radioactive && c.divs >= 3 && Game.bordersPower(c.id, X));
       if (!candidates.length) continue;

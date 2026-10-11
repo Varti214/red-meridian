@@ -48,7 +48,7 @@ const Game = {
   /* ---------------- СОЗДАНИЕ ИГРЫ ---------------- */
   newGame(difficulty = 'normal', tags = ['SOV'], names = {}) {
     const S = {
-      v: 3, day: 0, date: CFG.START_DATE, difficulty, nextNewsDay: 3,
+      v: 3, day: 0, date: CFG.START_DATE, difficulty, nextNewsDay: 3, ruua: 45,
       speed: 1, paused: true,
       tension: CFG.START.tension,
       countries: {}, powers: {}, pwars: {},
@@ -364,6 +364,7 @@ const Game = {
 
     this.as(null, () => AI.daily());
     this.as(null, () => this.tickPolitics());
+    this.tickRUUA();
     this.tickScheduled();
     for (const tag of this.alive()) this.as(tag, () => this.tickEvents());
     if (this.tickAutopilot) this.tickAutopilot();
@@ -675,6 +676,7 @@ const Game = {
     this.P().pp -= cost.pp;
     c.cb[this.cur] = { daysLeft: cost.days, total: cost.days };
     this.addTension(CFG.JUSTIFY.tension * (c.major ? 1.5 : 1));
+    if (this.ruuaPair(this.c(this.def().capital), c)) this.addRUUA(10);
     this.log('dip', 'Обоснование войны', `Пропаганда готовит повод для войны. Цель: ${c.name}. Срок — ${U.days(cost.days)}.`, id);
     const Y = this.powerOf(c);
     if (Y) this.log('alert', 'Угроза войны', `Разведка докладывает: держава «${this.def().name}» готовит повод для войны против нас.`, id, Y);
@@ -964,7 +966,7 @@ const Game = {
     P.armies = P.armies.filter(a => a.divs >= 0.5);
     dead.forEach(a => this.log('alert', 'Армия уничтожена', `${a.name} (командующий ${a.general}) перестала существовать.`, a.loc, tag));
   },
-  armyName(tag, n) { return { SOV: `${n}-я армия`, WST: `${n}-я армия США`, AXS: `${n}-я группа армий НОАК` }[tag] || `${n}-я армия`; },
+  armyName(tag, n) { return { SOV: `${n}-я армия`, WST: `${n}-я армия США`, AXS: `${n}-я группа армий НОАК`, UA: `${n}-й армейский корпус ВСУ` }[tag] || `${n}-я армия`; },
   newArmy(tag, name, divs, loc, mix) {
     const P = this.P(tag), d = POWERS[tag];
     P.armySeq++;
@@ -1638,6 +1640,8 @@ const Game = {
       }
     }
     if (fx.pop) for (const [ide, n] of Object.entries(fx.pop)) this.addPop(ide, n);
+    if (fx.ruua) this.addRUUA(fx.ruua);
+    if (fx.endSpirit) this.removeSpirit(X, fx.endSpirit);
     if (fx.claims) {
       const ids = fx.claims === 'neighbors'
         ? [...new Set(this.lands().flatMap(c => Geo.meta[c.id] ? Geo.meta[c.id].neighbors : []))]
@@ -1679,8 +1683,21 @@ const Game = {
     if (P.focuses.includes(f.id)) return 'done';
     if (P.focus && P.focus.id === f.id) return 'active';
     if ((f.excl || []).some(x => P.focuses.includes(x) || (P.focus && P.focus.id === x))) return 'excluded';
+    // Политический путь: в одном ряду можно взять только один
+    if (f.path && this.focusTree().some(o => o !== f && o.path && o.y === f.y && (P.focuses.includes(o.id) || (P.focus && P.focus.id === o.id)))) return 'excluded';
+    // Фокусы ветки чужого (исключённого) пути недоступны навсегда
+    if (this.focusBranchExcluded(f)) return 'excluded';
     const okReq = f.reqAny ? f.reqAny.some(r => P.focuses.includes(r)) : f.req.every(r => P.focuses.includes(r));
     return okReq ? 'available' : 'locked';
+  },
+  // Фокус лежит в ветке пути, который уже исключён выбором другого пути
+  focusBranchExcluded(f, seen = {}) {
+    if (seen[f.id]) return false;
+    seen[f.id] = true;
+    const parents = (f.reqAny || f.req || []).map(id => FOCUS_BY_ID[id]).filter(Boolean);
+    if (!parents.length) return false;
+    const st = p => p.path ? this.focusState(p) === 'excluded' : this.focusBranchExcluded(p, seen);
+    return f.reqAny ? parents.every(st) : parents.some(st);
   },
   canFocus(f) {
     if (this.outReason()) return this.outReason();

@@ -27,6 +27,8 @@
   --f-com: #9a3a5c;
   --f-west: #2d67c4;
   --f-chn: #d99a00;
+  --f-ua: #2fa3e0;
+  --f-guam: #3e8f8c;
   --f-axis: #a8841c;
   --f-neu: #6b6748;
   --front: #ec7a1c;
@@ -74,6 +76,8 @@ svg { display: block; }
 #map-root {
   position: absolute;
   inset: 0;
+  z-index: 0;
+  isolation: isolate;          /* метки глобуса не вылезают поверх панелей */
   background: radial-gradient(ellipse at 50% 46%, #0d2036 0%, #060c15 55%, #020408 100%);
   cursor: grab;
 }
@@ -1305,7 +1309,7 @@ kbd { padding: 1px 5px; border: 1px solid var(--line-2); border-bottom-width: 2p
 .intro-pane .m-actions { padding: 18px 0 28px; margin: 0; justify-content: center; }
 .intro-label { margin: 14px 0 7px; font: 600 10.5px var(--font-c); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
 
-.pw-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.pw-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .pw {
   position: relative;
   display: grid;
@@ -1609,3 +1613,19 @@ body.army-mode #map-root { cursor: crosshair; }
 /* Едва заметная метка: автопилот включён (видна только на этом экране) */
 body.assist-on .tb-clock::after { content: ''; position: absolute; right: 4px; bottom: 4px; width: 4px; height: 4px; border-radius: 50%; background: var(--green); opacity: 0.7; }
 body.assist-on .tb-clock { position: relative; }
+
+/* Названия стран на глобусе (как в HOI4) */
+.gl-lbl { pointer-events: none; z-index: 0; }
+.gl-lbl span {
+  display: block; white-space: nowrap; transform: translate(0, 0);
+  font: 700 12px var(--font-c); text-transform: uppercase; letter-spacing: 0.12em;
+  color: rgba(245, 248, 252, 0.9);
+  text-shadow: 0 0 3px rgba(2, 5, 10, 0.95), 0 0 8px rgba(2, 5, 10, 0.7), 0 1px 1px rgba(0, 0, 0, 0.9);
+  transition: font-size 0.12s linear;
+}
+.gl-lbl.sub span { font-weight: 500; color: rgba(225, 232, 240, 0.55); }
+
+/* Шкала «Россия — Украина» */
+.res-ruua.hot .res-val { color: var(--orange); }
+.res-ruua.crit .res-val { color: var(--red-2); animation: gmPulse 1.4s ease-in-out infinite; }
+.c-ua { color: #7cc8ff; font-weight: 600; }

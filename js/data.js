@@ -49,22 +49,29 @@ const CFG = {
 
 /* Блоки. Ключи исторические (так их знает код), названия — 2018 года:
    SOV — земли России, COM — ОДКБ и союзники Москвы, WEST — НАТО и союзники США,
-   AXIS — партнёры Китая по «Поясу и пути», NEU — неприсоединившиеся. */
+   AXIS — партнёры Китая по «Поясу и пути», UAF — земли Украины (если за неё играют),
+   GUAM — ГУАМ (Грузия, Украина, Азербайджан, Молдова), NEU — неприсоединившиеся. */
 const FACTIONS = {
   SOV:  { name: 'Россия',             color: '#b3121f', side: '#4d070c', stroke: '#ff8a7a', leader: 'RUS' },
   COM:  { name: 'ОДКБ',               color: '#9a3a5c', side: '#3f1726', stroke: '#f0a0bc', leader: 'RUS' },
   WEST: { name: 'НАТО',               color: '#2d67c4', side: '#12284d', stroke: '#9cc2ff', leader: 'USA' },
   AXIS: { name: 'Пояс и путь',        color: '#a8841c', side: '#3e3008', stroke: '#f0d070', leader: 'CHN' },
+  UAF:  { name: 'Украина',            color: '#2fa3e0', side: '#0c3550', stroke: '#a8dcff', leader: 'UKR' },
+  GUAM: { name: 'ГУАМ',               color: '#3e8f8c', side: '#123332', stroke: '#9fe0dc', leader: 'UKR' },
   NEU:  { name: 'Неприсоединившиеся', color: '#6b6748', side: '#2a281b', stroke: '#b9b48e' },
   NONE: { name: 'Без государства',    color: '#7f8b96', side: '#30363c', stroke: '#c9d2da' }
 };
 
 // Множитель обороны дивизий по доктрине блока
-const FACTION_DEF = { SOV: 1.0, COM: 0.9, WEST: 1.15, AXIS: 1.05, NEU: 0.85, NONE: 0.5 };
+const FACTION_DEF = { SOV: 1.0, COM: 0.9, WEST: 1.15, AXIS: 1.05, UAF: 1.05, GUAM: 0.9, NEU: 0.85, NONE: 0.5 };
+// Блоки, за которые вступаются союзники (для ИИ)
+const BLOCS = ['WEST', 'COM', 'AXIS', 'SOV', 'UAF', 'GUAM'];
 
 // Состав блоков на 1 января 2018 года
 const FACTION_MEMBERS = {
+  SOV:  ['RUS'],
   COM:  ['BLR', 'KAZ', 'ARM', 'KGZ', 'TJK', 'SYR'],
+  GUAM: ['UKR', 'GEO', 'AZE', 'MDA'],
   WEST: ['USA', 'CAN', 'GBR', 'FRA', 'DEU', 'ITA', 'ESP', 'PRT', 'NLD', 'BEL', 'LUX', 'NOR', 'DNK', 'ISL', 'POL', 'CZE',
          'SVK', 'HUN', 'ROU', 'BGR', 'HRV', 'SVN', 'ALB', 'MNE', 'EST', 'LVA', 'LTU', 'GRC', 'TUR', 'JPN', 'KOR', 'AUS',
          'NZL', 'ISR', 'GRL', 'PRI', 'FLK', 'ATF', 'NCL'],
@@ -81,7 +88,7 @@ const COUNTRY_OVERRIDES = {
   GBR: { fac: 12, divs: 6, fort: 1 }, FRA: { fac: 12, divs: 8 }, KOR: { fac: 10, divs: 14, fort: 2 },
   ITA: { fac: 10, divs: 6 }, BRA: { fac: 9, divs: 8 }, CAN: { fac: 8, divs: 3 }, TUR: { fac: 8, divs: 16, fort: 1 },
   MEX: { fac: 7, divs: 4 }, ESP: { fac: 7, divs: 5 }, IRN: { fac: 5, divs: 14, fort: 1 }, SAU: { fac: 6, divs: 6 },
-  ISR: { fac: 4, divs: 8, fort: 2 }, PAK: { fac: 3, divs: 14, fort: 1 }, POL: { fac: 6, divs: 6 }, UKR: { fac: 3, divs: 10, fort: 1 },
+  ISR: { fac: 4, divs: 8, fort: 2 }, PAK: { fac: 3, divs: 14, fort: 1 }, POL: { fac: 6, divs: 6 }, UKR: { fac: 8, divs: 14, fort: 2 },
   PRK: { fac: 2, divs: 22, fort: 3 }, TWN: { fac: 6, divs: 8, fort: 2 }, IDN: { fac: 6, divs: 8 }, AUS: { fac: 6, divs: 3 },
   EGY: { fac: 3, divs: 10 }, VNM: { fac: 3, divs: 10, fort: 1 }, KAZ: { fac: 3, divs: 3 }, BLR: { fac: 2, divs: 4 },
   SYR: { fac: 0, divs: 5 }, SWE: { fac: 4, divs: 3 }, CHE: { fac: 4, divs: 3, fort: 2 }, FIN: { fac: 2, divs: 4, fort: 2 },
@@ -180,9 +187,9 @@ const TEMPLATE_MAX_BATS = 10;
 const TEMPLATE_MAX = 8;
 // Стартовые шаблоны: названия у России, США и Китая, состав
 const START_TEMPLATES = [
-  { names: { SOV: 'Общевойсковая дивизия', WST: 'Пехотная дивизия', AXS: 'Общевойсковая дивизия НОАК' }, bats: { inf: 7, art: 2 } },
-  { names: { SOV: 'Танковая дивизия', WST: 'Бронетанковая дивизия', AXS: 'Тяжёлая общевойсковая дивизия' }, bats: { tank: 4, mot: 4, art: 1 } },
-  { names: { SOV: 'Мотострелковая дивизия', WST: 'Дивизия «Страйкер»', AXS: 'Механизированная дивизия' }, bats: { mot: 6, art: 2, at: 1 } }
+  { names: { SOV: 'Общевойсковая дивизия', WST: 'Пехотная дивизия', AXS: 'Общевойсковая дивизия НОАК', UA: 'Пехотная бригада' }, bats: { inf: 7, art: 2 } },
+  { names: { SOV: 'Танковая дивизия', WST: 'Бронетанковая дивизия', AXS: 'Тяжёлая общевойсковая дивизия', UA: 'Танковая бригада' }, bats: { tank: 4, mot: 4, art: 1 } },
+  { names: { SOV: 'Мотострелковая дивизия', WST: 'Дивизия «Страйкер»', AXS: 'Механизированная дивизия', UA: 'Механизированная бригада' }, bats: { mot: 6, art: 2, at: 1 } }
 ];
 
 /* ---------------- ДЕРЖАВЫ (за них играют люди) ----------------
@@ -230,14 +237,33 @@ const POWERS = {
       'Ван Нин', 'Лю Юэцзюнь']
   }
 };
+POWERS.UA = {
+  name: 'Украина', faction: 'UAF', allyFaction: 'GUAM', family: ['UAF', 'GUAM'],
+  color: '#2fa3e0', side: '#0c3550', stroke: '#a8dcff', emblem: 'i-emblem-ua',
+  capital: 'UKR', capitalPos: { lat: 50.45, lng: 30.52 }, capitalName: 'Киев', start: ['UKR'],
+  rivals: ['RUS'], pov: { lat: 49, lng: 34 },
+  leader: 'Пётр Порошенко', title: 'Президент Украины',
+  allyName: 'ГУАМ', mp: 700, divs: 24, techs: ['arm1'],
+  spirits: [
+    { id: 'donbass', name: 'Война на Донбассе', fx: { pp: -0.25, mpMult: 0.1 }, days: 1460, desc: 'Линия соприкосновения, обстрелы, тысячи людей под ружьём.' },
+    { id: 'corruption', name: 'Коррупция', fx: { rp: -0.05, pp: -0.1 }, days: 1095, desc: 'Олигархи и «схемы» тормозят реформы.' }
+  ],
+  armies: [{ name: 'ОК «Восток»', divs: 10, tanks: 3, loc: 'UKR' }, { name: 'ОК «Юг»', divs: 6, loc: 'UKR' }, { name: 'ОК «Север»', divs: 5, loc: 'UKR' }],
+  generals: ['Виктор Муженко', 'Руслан Хомчак', 'Валерий Залужный', 'Сергей Наев', 'Александр Сырский', 'Михаил Забродский',
+    'Юрий Содоль', 'Александр Павлюк', 'Сергей Шаптала', 'Евгений Мойсюк']
+};
 const POWER_TAGS = Object.keys(POWERS);
 
 // Названия веток и технологий для США и Китая (у России — исходные)
 const BRANCH_NAMES = {
+  UA: { industry: 'Индустрия 4.0', armor: 'ВСУ нового образца', nuclear: 'Ракетная программа' },
   WST: { industry: 'Экономика инноваций', armor: 'Армия будущего', nuclear: 'Ядерная триада США' },
   AXS: { industry: 'Сделано в Китае', armor: 'Интеллектуализация НОАК', nuclear: 'Ракетные войска НОАК' }
 };
 const TECH_NAMES = {
+  UA: { ind1: 'Электронное правительство', ind2: 'IT-кластеры', ind3: 'Оборонные стартапы', ind4: 'Цифровая экономика',
+    arm1: 'Танк «Оплот»', arm2: 'Модернизация Т-64БМ «Булат»', arm3: 'Ударные беспилотники «Байрактар»', arm4: 'Стандарты НАТО',
+    nuc1: 'Возрождение ракетной отрасли', nuc2: 'Противокорабельный «Нептун»', nuc3: 'Тайная ядерная программа', nuc4: 'Ракетный комплекс «Гром-2»', nuc5: 'Ядерный арсенал' },
   WST: { ind1: 'Облачные вычисления', ind2: 'Возвращение производств', ind3: 'Искусственный интеллект', ind4: 'Квантовое превосходство',
     arm1: 'M1A2C «Абрамс»', arm2: 'Программа OMFV', arm3: 'Рои беспилотников', arm4: 'Многодоменные операции',
     nuc1: 'Модернизация триады', nuc2: 'Космический эшелон SBIRS', nuc3: 'Обзор ядерной политики', nuc4: 'МБР «Сентинел»', nuc5: 'Гиперзвуковое оружие LRHW' },

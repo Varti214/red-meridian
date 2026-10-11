@@ -115,7 +115,7 @@ const GOV_2018 = {
   BEL: ['lib', 'Шарль Мишель', '2019-05-26', 5, '', { nat: 'Барт де Вевер', soc: 'Элио Ди Рупо' }, { lib: 28, nat: 26, soc: 24, con: 18, com: 4 }],
   SWE: ['soc', 'Стефан Лёвен', '2018-09-09', 4, '', { con: 'Ульф Кристерссон', nat: 'Йимми Окессон' }, { soc: 34, con: 28, nat: 18, lib: 12, com: 8 }],
   NOR: ['con', 'Эрна Сульберг', '2021-09-13', 4, '', { soc: 'Йонас Гар Стёре' }, { con: 36, soc: 36, nat: 14, lib: 10, com: 4 }],
-  FIN: ['con', 'Юха Сипиля', '2019-04-14', 4, '', { soc: 'Санна Марин', nat: 'Юсси Халла-ахо', con: 'Петтери Орпо' }, { soc: 30, con: 30, nat: 18, lib: 16, com: 6 }],
+  FIN: ['lib', 'Юха Сипиля', '2019-04-14', 4, '', { soc: 'Санна Марин', nat: 'Юсси Халла-ахо', con: 'Петтери Орпо' }, { soc: 30, con: 28, lib: 20, nat: 18, com: 4 }],
   DNK: ['lib', 'Ларс Лёкке Расмуссен', '2019-06-05', 4, '', { soc: 'Метте Фредериксен', nat: 'Кристиан Тулесен Даль' }, { soc: 32, lib: 30, nat: 18, con: 14, com: 6 }],
   AUT: ['con', 'Себастьян Курц', '2019-09-29', 5, '', { nat: 'Норберт Хофер', soc: 'Памела Ренди-Вагнер' }, { con: 36, nat: 26, soc: 26, lib: 12 }],
   CZE: ['con', 'Андрей Бабиш', '2021-10-09', 4, '', { lib: 'Петр Фиала', nat: 'Томио Окамура' }, { con: 34, lib: 30, nat: 14, soc: 12, com: 10 }],
@@ -125,7 +125,7 @@ const GOV_2018 = {
   GRC: ['soc', 'Алексис Ципрас', '2019-07-07', 4, '', { con: 'Кириакос Мицотакис', nat: 'Никос Михалолиакос' }, { con: 38, soc: 32, com: 10, nat: 10, lib: 10 }],
   PRT: ['soc', 'Антониу Кошта', '2019-10-06', 4, '', { con: 'Руй Рио', nat: 'Андре Вентура' }, { soc: 40, con: 30, com: 12, lib: 10, nat: 8 }],
   SRB: ['con', 'Александр Вучич', '2020-06-21', 4, 'm', { lib: 'Драган Джилас' }, { con: 52, lib: 18, nat: 16, soc: 14 }],
-  IRL: ['con', 'Лео Варадкар', '2020-02-08', 5, '', { soc: 'Мэри Лу Макдональд', con: 'Михол Мартин' }, { con: 44, soc: 34, lib: 16, nat: 6 }],
+  IRL: ['con', 'Лео Варадкар', '2020-02-08', 5, '', { soc: 'Мэри Лу Макдональд', lib: 'Михол Мартин' }, { con: 44, soc: 34, lib: 16, nat: 6 }],
   NZL: ['soc', 'Джасинда Ардерн', '2020-10-17', 3, '', { con: 'Джудит Коллинз' }, { soc: 44, con: 40, lib: 10, nat: 6 }],
   CHL: ['con', 'Себастьян Пиньера', '2021-11-21', 4, '', { soc: 'Габриэль Борич', nat: 'Хосе Антонио Каст' }, { con: 36, soc: 34, nat: 14, lib: 10, com: 6 }],
   COL: ['lib', 'Хуан Мануэль Сантос', '2018-05-27', 4, '', { con: 'Иван Дуке', soc: 'Густаво Петро' }, { con: 38, soc: 30, lib: 26, nat: 6 }],
@@ -165,7 +165,7 @@ const GOV_2018 = {
   CHE: ['lib', 'Ален Берсе', '2019-10-20', 4, '', { nat: 'Альберт Рёсти', con: 'Игнацио Кассис' }, { nat: 28, lib: 26, soc: 24, con: 18, com: 4 }],
   HRV: ['con', 'Андрей Пленкович', '2020-07-05', 4, '', { soc: 'Давор Бернардич' }, { con: 40, soc: 32, lib: 14, nat: 14 }],
   SVN: ['lib', 'Миро Церар', '2018-06-03', 4, '', { con: 'Янез Янша', lib: 'Роберт Голоб' }, { con: 30, lib: 34, soc: 22, nat: 8, com: 6 }],
-  EST: ['lib', 'Юри Ратас', '2019-03-03', 4, '', { lib: 'Кая Каллас', nat: 'Март Хельме' }, { lib: 46, con: 18, nat: 18, soc: 12, auth: 6 }],
+  EST: ['soc', 'Юри Ратас', '2019-03-03', 4, '', { lib: 'Кая Каллас', nat: 'Март Хельме' }, { lib: 32, soc: 26, nat: 18, con: 14, auth: 10 }],
   LVA: ['con', 'Марис Кучинскис', '2018-10-06', 4, '', { lib: 'Кришьянис Кариньш', auth: 'Нил Ушаков' }, { con: 30, lib: 26, auth: 22, nat: 16, soc: 6 }],
   LTU: ['lib', 'Саулюс Сквернялис', '2020-10-11', 4, '', { con: 'Ингрида Шимоните' }, { lib: 34, con: 34, soc: 20, nat: 12 }],
   ALB: ['soc', 'Эди Рама', '2021-04-25', 4, '', { con: 'Лулзим Баша' }, { soc: 50, con: 40, lib: 10 }],
@@ -267,6 +267,12 @@ Object.assign(Game, {
   },
   leaderLabel(pol) { return pol.leader || `лидер партии «${IDEOLOGIES[pol.ide].name}»`; },
   ideName(ide) { return IDEOLOGIES[ide] ? IDEOLOGIES[ide].name : '—'; },
+  // Настоящее название партии этой идеологии в стране (или общее)
+  partyName(c, ide) {
+    const h = c && this.govHolder(c);
+    const id = h ? h.id : null;
+    return (id && PARTIES[id] && PARTIES[id][ide]) || GENERIC_PARTIES[ide] || IDEOLOGIES[ide].name;
+  },
   // Ближайшие выборы через столько дней (null — выборов нет)
   electionIn(pol) { return pol && pol.next != null ? Math.max(0, pol.next - this.S.day) : null; },
 
@@ -340,7 +346,7 @@ Object.assign(Game, {
   realign(c, oldIde) {
     if (c.ctrl !== c.id || c.inert) return;
     const ide = c.pol.ide;
-    const blocs = ['WEST', 'COM', 'AXIS'];
+    const blocs = ['WEST', 'COM', 'AXIS', 'GUAM'];
     if (blocs.includes(c.faction)) {
       const lead = this.c(FACTIONS[c.faction].leader);
       const li = lead && this.gov(lead) ? this.gov(lead).ide : null;
@@ -388,13 +394,14 @@ Object.assign(Game, {
     pol.next = pol.every ? S.day + Math.round(pol.every * 365) : null;
     pol.meddled = {};
     const changed = winner !== old || leader !== pol.leader;
-    const party = `партия «${IDEOLOGIES[winner].name}»`;
-    const who = leader || `кандидат партии «${IDEOLOGIES[winner].name}»`;
+    const pn = this.partyName(c, winner);
+    const party = `партия «${pn}»`;
+    const who = leader ? `${leader} («${pn}»)` : `кандидат партии «${pn}»`;
     let text;
     if (crisis) text = `Официальные итоги не признаны: на улицы вышли сотни тысяч человек. Власть переходит к оппозиции — ${who} (${IDEOLOGIES[winner].name.toLowerCase()}).`;
     else if (winner !== old) text = `Побеждает ${who} (${IDEOLOGIES[winner].name.toLowerCase()}) — ${share}% голосов. Страну ждёт смена курса: ${IDEOLOGIES[winner].gov.toLowerCase()}.`;
     else if (changed) text = `Партия власти удерживает большинство (${share}%). Новый лидер — ${who}.`;
-    else text = `${leader || party[0].toUpperCase() + party.slice(1)} сохраняет власть: ${share}% голосов.${pol.managed ? ' Оппозиция говорит о нарушениях.' : ''}`;
+    else text = `${leader ? who : party[0].toUpperCase() + party.slice(1)} сохраняет власть: ${share}% голосов.${pol.managed ? ' Оппозиция говорит о нарушениях.' : ''}`;
     this.news(`Выборы: ${c.name}`, text, c.id, 'elections');
     if (this.isPowerHome(c) && !changed) {
       this.popup({
@@ -536,7 +543,7 @@ Object.assign(Game, {
     c.pol.sup.push({ by: X, ide, days: CFG.POL.supportDays, k: own ? 1.4 : 1 });
     c.pol.helped[X] = this.S.day;
     if (!own) this.addTension(0.5);
-    const party = IDEOLOGIES[ide].name;
+    const party = this.partyName(c, ide);
     this.log('dip', own ? 'Агитационная кампания' : 'Поддержка партии',
       own ? `Государственные СМИ и активисты работают на партию «${party}». Срок — ${U.days(CFG.POL.supportDays)}.`
         : `Деньги, СМИ и консультанты работают на партию «${party}». Страна: ${c.name}. Срок — ${U.days(CFG.POL.supportDays)}.`, id);
@@ -565,7 +572,7 @@ Object.assign(Game, {
   meddle(id, ide) {
     const c = this.c(id), why = this.canMeddle(c, ide);
     if (why) return this.fail(why);
-    const X = this.cur, P = this.P(), party = IDEOLOGIES[ide].name;
+    const X = this.cur, P = this.P(), party = this.partyName(c, ide);
     P.pp -= CFG.POL.meddle;
     c.pol.meddled[X] = true;
     c.pol.helped[X] = this.S.day;
@@ -612,7 +619,7 @@ Object.assign(Game, {
       P.stats.spyOk++;
       this.addTension(3);
       const leader = c.pol.cands[ide] || null;
-      this.news(`Переворот: ${c.name}`, `Власть захвачена силами, близкими к партии «${I.name}». ${leader ? 'Новый лидер — ' + leader + '.' : 'Сформировано временное правительство.'}`, id, 'elections');
+      this.news(`Переворот: ${c.name}`, `Власть захвачена силами, близкими к партии «${this.partyName(c, ide)}». ${leader ? 'Новый лидер — ' + leader + '.' : 'Сформировано временное правительство.'}`, id, 'elections');
       this.setGov(c, ide, leader, 'coup');
       // Переворот «своих» почти наверняка приводит страну в наш блок
       if (c.faction === 'NEU' && Politics.affinity(ide, this.powerIde(X)) === 2 && U.chance(0.6)) this.setFaction(id, POWERS[X].allyFaction);

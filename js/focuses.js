@@ -185,9 +185,64 @@ const FOCUS_TREES = {
     { id: 'a_tianxia', x: 7, y: 5, days: 90, req: ['a_taiwan', 'a_borders'], name: 'Поднебесная', fx: { justify: 0.4, attackBonus: 0.1, claims: 'neighbors' },
       desc: 'Повод для войны со всеми соседями, обоснование −40%, атака +10%.' }
   ]
+,
+
+  UA: [
+    { id: 'ua_root', x: 4, y: 0, days: 35, req: [], name: 'Европейский выбор', fx: { pp: 0.5 },
+      desc: 'Безвиз, ассоциация с ЕС и курс на реформы. +0,5 ПВ в день.' },
+    { id: 'ua_decentr', x: 1, y: 1, days: 50, req: ['ua_root'], name: 'Децентрализация', fx: { addFactories: 3, factoryEvery: 35 },
+      desc: 'Громады получают деньги и полномочия. +3 завода и +1 завод каждые 35 дней.' },
+    { id: 'ua_army', x: 4, y: 1, days: 50, req: ['ua_root'], name: 'ВСУ по стандартам НАТО', fx: { addMP: 150, train: 0.15, defense: 0.05 },
+      desc: '+150 тыс. призывников, обучение быстрее на 15%, оборона +5%.' },
+    { id: 'ua_sbu', x: 7, y: 1, days: 45, req: ['ua_root'], name: 'Реформа СБУ', fx: { spyCost: 0.3, spyChance: 0.15 },
+      desc: 'Тайные операции и вмешательство дешевле на 30%, успех +15%.' },
+
+    { id: 'ua_poroshenko', x: 1, y: 2, days: 40, req: ['ua_root'], excl: ['ua_zelensky', 'ua_boyko'], name: 'Армия. Язык. Вера', path: 'Курс Порошенко',
+      fx: { gov: { ide: 'con', leader: 'Пётр Порошенко', title: 'Президент Украины' }, defense: 0.05, pp: 0.3, pop: { con: 8 }, ruua: 5 },
+      desc: 'Пётр Порошенко идёт на второй срок под лозунгом «Армия. Язык. Вера». Оборона +5%, +0,3 ПВ в день.' },
+    { id: 'ua_zelensky', x: 4, y: 2, days: 60, req: ['ua_root'], excl: ['ua_poroshenko', 'ua_boyko'], name: 'Слуга народа', path: 'Новые лица',
+      fx: { gov: { ide: 'lib', leader: 'Владимир Зеленский', title: 'Президент Украины' }, rp: 0.08, tensionDecay: 1.5, ruua: -10 },
+      desc: 'Шоумен Владимир Зеленский побеждает с 73% голосов. Идеология — либеральная демократия. +8% ОИ, напряжённость с Россией −10.' },
+    { id: 'ua_boyko', x: 7, y: 2, days: 60, req: ['ua_root'], excl: ['ua_poroshenko', 'ua_zelensky'], name: 'Мир и сотрудничество', path: 'Примирение',
+      fx: { gov: { ide: 'auth', leader: 'Юрий Бойко', title: 'Президент Украины' }, pp: 0.3, ruua: -25 },
+      desc: 'К власти приходит «Оппозиционная платформа» и Юрий Бойко. Курс на мир с Россией: напряжённость −25, +0,3 ПВ в день.' },
+
+    { id: 'ua_tomos', x: 0, y: 3, days: 50, req: ['ua_poroshenko'], name: 'Томос', fx: { pp: 0.3, pop: { con: 8 }, ruua: 5 },
+      desc: 'Православная церковь Украины получает автокефалию. +0,3 ПВ в день, популярность власти +8%.' },
+    { id: 'ua_javelin', x: 2, y: 3, days: 50, req: ['ua_poroshenko'], name: 'Джавелины', fx: { defense: 0.15 },
+      desc: 'Американские ПТРК на передовой. Оборона армий +15%.' },
+    { id: 'ua_joint', x: 0, y: 4, days: 60, req: ['ua_tomos'], name: 'Операция Объединённых сил', fx: { army: { name: 'Объединённые силы', divs: 12 } },
+      desc: 'Новая армия из 12 бригад на востоке.' },
+    { id: 'ua_wall', x: 2, y: 4, days: 60, req: ['ua_javelin'], name: 'Проект «Стена»', fx: { defense: 0.1, addDivs: 6 },
+      desc: 'Укрепления на границе с Россией. Оборона +10%, +6 бригад в резерв.' },
+    { id: 'ua_return', x: 1, y: 5, days: 90, req: ['ua_joint', 'ua_wall'], name: 'Возвращение территорий', fx: { claims: ['RUS'], attackBonus: 0.1, ruua: 30 },
+      desc: 'Повод для войны с Россией, атака +10%. Напряжённость с Россией +30.' },
+
+    { id: 'ua_digital', x: 3, y: 3, days: 50, req: ['ua_zelensky'], name: 'Государство в смартфоне', fx: { rp: 0.1, endSpirit: 'corruption' },
+      desc: 'Электронные услуги и прозрачные закупки. +10% ОИ, убирает дух «Коррупция».' },
+    { id: 'ua_normandy', x: 5, y: 3, days: 50, req: ['ua_zelensky'], name: 'Нормандский формат', fx: { ruua: -20, tension: -5 },
+      desc: 'Переговоры в Париже, обмен пленными. Напряжённость с Россией −20, мировая −5.' },
+    { id: 'ua_partner', x: 3, y: 4, days: 60, req: ['ua_digital'], name: 'Стратегическое партнёрство с США', fx: { defense: 0.15, addDivs: 8 },
+      desc: 'Оружие, инструкторы и разведданные. Оборона +15%, +8 бригад в резерв.' },
+    { id: 'ua_eu', x: 5, y: 4, days: 60, req: ['ua_normandy'], name: 'Кандидат в ЕС', fx: { addFactories: 6, factoryEvery: 28 },
+      desc: 'Европейские деньги и рынки. +6 заводов, +1 завод каждые 28 дней.' },
+    { id: 'ua_nato', x: 4, y: 5, days: 90, req: ['ua_partner', 'ua_eu'], name: 'Курс на НАТО', fx: { defense: 0.15, pp: 1, allies: ['GEO', 'MDA', 'AZE', 'ARM'], ruua: 20 },
+      desc: 'Оборона +15%, +1 ПВ в день, соседи вступают в ГУАМ. Москва в ярости: напряжённость +20.' },
+
+    { id: 'ua_gas', x: 6, y: 3, days: 50, req: ['ua_boyko'], name: 'Газовый контракт', fx: { addFactories: 6, ruua: -15 },
+      desc: 'Дешёвый газ и транзит. +6 заводов, напряжённость с Россией −15.' },
+    { id: 'ua_donbass', x: 8, y: 3, days: 60, req: ['ua_boyko'], name: 'Особый статус Донбасса', fx: { ruua: -25, endSpirit: 'donbass', pop: { auth: 8 } },
+      desc: 'Минские соглашения выполнены. Убирает дух «Война на Донбассе», напряжённость −25.' },
+    { id: 'ua_eaeu', x: 6, y: 4, days: 60, req: ['ua_gas'], name: 'Наблюдатель в ЕАЭС', fx: { addFactories: 4, pp: 0.3 },
+      desc: 'Восточные рынки снова открыты. +4 завода, +0,3 ПВ в день.' },
+    { id: 'ua_treaty', x: 8, y: 4, days: 60, req: ['ua_donbass'], name: 'Большой договор с Россией', fx: { ruua: -40, tension: -8 },
+      desc: 'Новый договор о дружбе. Напряжённость с Россией −40, мировая −8.' },
+    { id: 'ua_brothers', x: 7, y: 5, days: 90, req: ['ua_eaeu', 'ua_treaty'], name: 'Добрые соседи', fx: { pp: 1, addFactories: 8, rp: 0.1 },
+      desc: '+1 ПВ в день, +8 заводов, +10% ОИ.' }
+  ]
 };
 
 // Плоский список всех фокусов (id уникальны благодаря префиксам s_/w_/a_)
 const FOCUSES = [].concat(...Object.values(FOCUS_TREES));
 // Разовые эффекты не попадают в постоянные бонусы
-const FOCUS_ONCE = ['addFactories', 'addMP', 'addDivs', 'addPP', 'tension', 'claims', 'allies', 'annex', 'army', 'factories', 'mp', 'gov', 'pop'];
+const FOCUS_ONCE = ['addFactories', 'addMP', 'addDivs', 'addPP', 'tension', 'claims', 'allies', 'annex', 'army', 'factories', 'mp', 'gov', 'pop', 'ruua', 'endSpirit'];

@@ -159,6 +159,34 @@ const MapView = {
     return { cap, capA: U.rgba(cap, 0.93), side: U.rgba(side, 0.9), stroke: strokeColor, alt };
   },
 
+  /* ---- Названия стран, как в HOI4 ----
+     Независимая страна — своё имя; столица державы — имя державы крупно;
+     присоединённые и оккупированные земли — своё имя мельче и бледнее.
+     base — «размер» подписи в градусах карты (растёт с площадью страны). */
+  labelCache: new Map(),
+  labels() {
+    if (!Game.S) return [];
+    const out = [];
+    Game.eachCountry(c => {
+      const m = Geo.meta[c.id];
+      if (!m || c.inert) return;
+      const tag = Game.isPower(c.ctrl) ? c.ctrl : null;
+      const main = c.ctrl === c.id || (tag && POWERS[tag].capital === c.id);
+      const text = tag && main ? POWERS[tag].name : c.name;
+      // У державы подпись крупнее: учитываем все её земли
+      // Площадь в «градусах» на высоких широтах завышена — поправка на косинус широты
+      const real = l => { const g = Geo.meta[l.id] || Geo.meta[l]; return g ? g.area * Math.cos(g.centroid.lat * Math.PI / 180) : 0; };
+      const area = tag && main ? Game.lands(tag).reduce((s, l) => s + real(l), 0) * 0.7 + real(c) * 0.3 : real(c);
+      const base = Math.min(7.5, Math.sqrt(Math.max(0.3, area)) * 0.3) * (main ? 1 : 0.7);
+      const bb = m.bbox, dy = Math.min(3, (bb[3] - bb[1]) * 0.12);
+      let d = this.labelCache.get(c.id);
+      if (!d) { d = { key: 'lbl-' + c.id, kind: 'label', id: c.id }; this.labelCache.set(c.id, d); }
+      d.text = text; d.base = base; d.sub = !main; d.lat = m.centroid.lat + dy; d.lng = m.centroid.lng;
+      out.push(d);
+    });
+    return out;
+  },
+
   /* ---- Метки на карте ---- */
   markers() {
     const out = [];
@@ -364,6 +392,17 @@ const GlobeRenderer = {
     controls.zoomSpeed = 0.8;
     controls.enableDamping = true;
     controls.dampingFactor = 0.12;
+    // При зуме подписи меняют размер (не чаще раза за кадр)
+    // Камера может лететь сама (переход к стране) — раз в 300 мс сверяем положение
+    this.lblTimer = setInterval(() => {
+      if (!this.g) return;
+      const p = this.g.pointOfView(), k = p.lat.toFixed(1) + p.lng.toFixed(1) + p.altitude.toFixed(2);
+      if (k !== this.lblKey) { this.lblKey = k; this.scaleLabels(); }
+    }, 300);
+    controls.addEventListener('change', () => {
+      if (this.lblRaf) return;
+      this.lblRaf = requestAnimationFrame(() => { this.lblRaf = 0; this.scaleLabels(); });
+    });
 
     g.renderer().setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     g.renderer().domElement.addEventListener('webglcontextlost', e => {
@@ -378,6 +417,7 @@ const GlobeRenderer = {
   },
 
   destroy() {
+    clearInterval(this.lblTimer);
     try { this.g.pauseAnimation(); } catch (e) { /* уже остановлен */ }
     try { this.g._destructor(); } catch (e) { /* в старых версиях метода может не быть */ }
     this.g = null;
@@ -398,6 +438,7 @@ const GlobeRenderer = {
 
   refreshPolygons() {
     if (!this.g) return;
+    this.labelData = MapView.labels();
     MapView.armyTargetsCache = MapView.armyTargets();
     const st = f => MapView.style(f.properties.id);
     this.g.polygonCapColor(f => st(f).capA)
@@ -411,11 +452,52 @@ const GlobeRenderer = {
     this.g.arcsData(MapView.frontArcs().concat(this.tempArcs));
     this.g.pathsData(MapView.frontLines().concat(MapView.movePaths()));
     this.g.ringsData(this.tempRings.slice());
-    this.g.htmlElementsData(MapView.markers().concat(MapView.armyMarkers()));
+    this.g.htmlElementsData(this.labelData.concat(MapView.markers(), MapView.armyMarkers()));
+    this.scaleLabels();
+  },
+  labelData: [],
+
+  // Размер подписи в пикселях: градусы × пикселей на градус при текущей высоте камеры
+  scaleLabels() {
+    if (!this.g) return;
+    const alt = this.g.pointOfView().altitude;
+    this.ppd = 0.0194 * this.el.clientHeight / (1 + alt);
+    this.pov = this.g.pointOfView();
+    for (const d of this.labelData) {
+      const el = this.markerEls.get(d.key);
+      if (el) this.sizeLabel(el, d);
+    }
+  },
+  sizeLabel(el, d) {
+    const px = Math.min(40, d.base * (this.ppd || 4));
+    const span = el.firstChild;
+    // Обратная сторона глобуса и край диска — подпись прячем
+    const v = this.pov || { lat: 0, lng: 0 }, r = Math.PI / 180;
+    const cosAng = Math.sin(d.lat * r) * Math.sin(v.lat * r) + Math.cos(d.lat * r) * Math.cos(v.lat * r) * Math.cos((d.lng - v.lng) * r);
+    if (px < 9 || cosAng < 0.3) { span.style.display = 'none'; return; }
+    span.style.display = '';
+    span.style.opacity = cosAng < 0.5 ? ((cosAng - 0.3) / 0.2).toFixed(2) : '';
+    span.style.fontSize = px.toFixed(1) + 'px';
+    span.style.letterSpacing = px > 22 ? '0.2em' : px > 14 ? '0.12em' : '0.05em';
+  },
+
+  labelEl(d) {
+    let el = this.markerEls.get(d.key);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'gl-lbl';
+      el.appendChild(document.createElement('span'));
+      this.markerEls.set(d.key, el);
+    }
+    el.classList.toggle('sub', d.sub);
+    if (el.firstChild.textContent !== d.text) el.firstChild.textContent = d.text;
+    this.sizeLabel(el, d);
+    return el;
   },
 
   markerEl(d) {
     if (d.kind === 'army') return this.armyEl(d);
+    if (d.kind === 'label') return this.labelEl(d);
     let el = this.markerEls.get(d.key);
     if (!el) {
       el = document.createElement('div');
@@ -713,7 +795,7 @@ const FlatRenderer = {
   },
 
   refresh() { this.dirty = true; },
-  refreshPolygons() { MapView.armyTargetsCache = MapView.armyTargets(); this.dirty = true; },
+  refreshPolygons() { MapView.armyTargetsCache = MapView.armyTargets(); this.labelDirty = true; this.dirty = true; },
   refreshOverlays() { this.dirty = true; },
   hitArmy(e) {
     const r = this.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
@@ -783,6 +865,7 @@ const FlatRenderer = {
     }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.drawLabels(ctx);
     this.drawFrontLines(ctx, now);
     this.drawArcs(ctx, now);
     this.drawMarkers(ctx);
@@ -849,6 +932,29 @@ const FlatRenderer = {
       ctx.fillRect(x + 2, y + h - 4, (w - 4) * d.org / 100, 2);
       if (d.mine) this.armyBoxes.push({ x, y, w, h, id: d.id, tag: d.tag });
     }
+  },
+
+  drawLabels(ctx) {
+    if (!this.labelData || this.labelDirty !== false) { this.labelData = MapView.labels(); this.labelDirty = false; }
+    const ppd = this.view.scale * this.W0 / 360;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    for (const d of this.labelData) {
+      const px = Math.min(40, d.base * ppd);
+      if (px < 9) continue;
+      const [x, y] = this.toScreen(d.lng, d.lat);
+      const sp = px > 22 ? 0.2 : px > 14 ? 0.12 : 0.05;
+      ctx.font = `${d.sub ? 500 : 700} ${px.toFixed(1)}px "Bahnschrift", "Segoe UI", sans-serif`;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = (px * sp).toFixed(1) + 'px';
+      const t = d.text.toUpperCase();
+      ctx.lineWidth = Math.max(2, px / 5);
+      ctx.strokeStyle = 'rgba(4,8,14,0.75)';
+      ctx.strokeText(t, x, y);
+      ctx.fillStyle = d.sub ? 'rgba(225,232,240,0.55)' : 'rgba(245,248,252,0.9)';
+      ctx.fillText(t, x, y);
+    }
+    if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
   },
 
   drawMarkers(ctx) {
