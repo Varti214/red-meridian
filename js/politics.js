@@ -456,7 +456,7 @@ Object.assign(Game, {
       if (n.cond && !n.cond()) { if (S.day > at + 120) S.flags[key] = 'skipped'; continue; }
       S.flags[key] = 1;
       try { n.fx && n.fx(); } catch (e) { console.error('[news]', n.id, e); }
-      this.news(n.title, typeof n.text === 'function' ? n.text() : n.text, n.cid || null, n.kind);
+      this.news(n.title, typeof n.text === 'function' ? n.text() : n.text, n.cid || null, n.kind || 'world');
     }
     // Исторические события с выбором — сначала мировая новость (и что меняется в мире), затем решения держав
     for (const e of (typeof EVENTS !== 'undefined' ? EVENTS : [])) {
@@ -468,7 +468,7 @@ Object.assign(Game, {
       S.flags[key] = 1;
       try {
         if (e.world) e.world();
-        if (!e.noNews) this.news(e.title, typeof e.text === 'function' ? e.text({}) : e.text, e.cid || null);
+        if (!e.noNews) this.news(e.title, typeof e.text === 'function' ? e.text({}) : e.text, e.cid || null, 'world');
       } catch (err) { console.error('[event world]', e.id, err); }
     }
     if (S.day < (S.nextNewsDay || 4) || typeof RANDOM_NEWS === 'undefined') return;

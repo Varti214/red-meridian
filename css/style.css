@@ -1631,3 +1631,33 @@ body.assist-on .tb-clock { position: relative; }
 .c-ua { color: #7cc8ff; font-weight: 600; }
 
 .bat-para { background: rgba(120, 190, 255, 0.18); color: #a8d6ff; }
+
+/* ---- Новость на экране (как в HOI4): газетная вырезка ---- */
+.m-newsflash { width: min(560px, 100%); padding: 18px 22px 18px; background: linear-gradient(180deg, #1b1a17, #121110); border-color: rgba(227, 200, 140, 0.35); }
+.nf-mast { display: flex; align-items: baseline; justify-content: space-between; padding-right: 30px; border-bottom: 3px double rgba(227, 200, 140, 0.45); padding-bottom: 6px; margin-bottom: 12px; }
+.nf-mast span { font: 700 22px/1 Georgia, "Times New Roman", serif; letter-spacing: 0.08em; text-transform: uppercase; color: #efe2c4; }
+.nf-mast em { font: 600 11px var(--font-c); font-style: normal; letter-spacing: 0.12em; text-transform: uppercase; color: #b9a982; }
+.nf-art { position: relative; height: 150px; display: grid; place-items: center; overflow: hidden; border-radius: 3px; margin-bottom: 12px;
+  background: radial-gradient(circle at 50% 45%, rgba(227, 200, 140, 0.16), transparent 65%), linear-gradient(160deg, #2a261f, #14130f); filter: sepia(0.25); }
+.nf.k-war .nf-art { background: radial-gradient(circle at 50% 45%, rgba(255, 90, 70, 0.22), transparent 65%), linear-gradient(160deg, #2c1b17, #140f0d); }
+.nf.k-elections .nf-art { background: radial-gradient(circle at 50% 45%, rgba(164, 135, 242, 0.22), transparent 65%), linear-gradient(160deg, #211d2c, #110f16); }
+.nf-grid { position: absolute; inset: 0; background-image: repeating-linear-gradient(0deg, rgba(255,255,255,0.03) 0 1px, transparent 1px 4px); }
+.nf-art svg { width: 78px; height: 78px; color: #e7d6ae; opacity: 0.9; filter: drop-shadow(0 0 18px rgba(227, 200, 140, 0.35)); animation: artIn 0.6s ease-out; }
+.nf.k-war .nf-art svg { color: #ff8a70; }
+.nf.k-elections .nf-art svg { color: #c8b6ff; }
+.nf-stamp { position: absolute; left: 10px; top: 10px; font: 700 10px var(--font-c); letter-spacing: 0.14em; text-transform: uppercase; color: #e7d6ae; border: 1px solid rgba(231, 214, 174, 0.5); padding: 2px 6px; transform: rotate(-3deg); }
+.nf-place { position: absolute; right: 10px; bottom: 8px; font: 600 12px Georgia, serif; font-style: italic; color: #cbbd99; }
+.nf-head { margin: 0 0 8px; font: 700 26px/1.15 Georgia, "Times New Roman", serif; color: #f6efdc; }
+.nf-text { margin: 0 0 14px; font: 14px/1.55 Georgia, "Times New Roman", serif; color: #d6ccb4; }
+
+/* ---- Бегущая строка мелких новостей ---- */
+#news-ticker { position: fixed; top: calc(var(--top-h) + 10px); left: 50%; transform: translateX(-50%); z-index: 40; display: flex; flex-direction: column; gap: 6px; width: min(560px, 60vw); pointer-events: none; }
+.nt-item { pointer-events: auto; display: grid; grid-template-columns: 18px auto 1fr; gap: 8px; align-items: center; text-align: left; cursor: pointer;
+  padding: 7px 12px; background: rgba(22, 20, 16, 0.94); border: 1px solid rgba(227, 200, 140, 0.3); border-left: 3px solid #c9b27a; border-radius: 3px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); opacity: 0; transform: translateY(-8px); transition: opacity 0.35s, transform 0.35s; }
+.nt-item.show { opacity: 1; transform: none; }
+.nt-item.major { border-left-color: var(--red-2); }
+.nt-item svg { width: 16px; height: 16px; color: #c9b27a; }
+.nt-item b { font: 700 13px Georgia, "Times New Roman", serif; color: #f2e8d0; white-space: nowrap; }
+.nt-item span { font-size: 12px; color: #b9ae94; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 900px) { #news-ticker { width: calc(100vw - 20px); } .nt-item span { display: none; } }

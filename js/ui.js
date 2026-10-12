@@ -34,6 +34,8 @@ const UI = {
   polSel: null,             // выбранная партия в панели политики: { cid, ide }
   newsTab: 'all',
   newsSeen: 0,              // id последней прочитанной новости
+  newsQueue: [],            // важные новости, ждущие показа на экране
+  newsMode: null,           // 'full' — важные окном, остальные строкой; 'ticker' — все строкой; 'off'
 
   me() { return Game.me; },
   P() { return Game.P(Game.me); },
@@ -107,6 +109,9 @@ const UI = {
     this.sig = {};
     this.unread = 0;
     this.newsSeen = 0;
+    // Новости новой партии (например, «Мир в 2018 году») оставляем, чужие — выбрасываем
+    this.newsQueue = this.newsQueue.filter(e => Game.S.log.includes(e));
+    setTimeout(() => this.nextNews(), 900);
     this.polSel = null;
     this.eventQueue = [];
     this.select(null);
@@ -1062,7 +1067,7 @@ const UI = {
     if (m.onClose) m.onClose();
     this.hideTip();
     this.tipTarget = null;
-    setTimeout(() => this.nextEvent(), 150);
+    setTimeout(() => { this.nextEvent(); this.nextNews(); }, 150);
   },
 
   closeAll() {
@@ -1079,7 +1084,7 @@ const UI = {
     const wait = this.fxBusyUntil - performance.now();
     if (wait > 0) { clearTimeout(this.evTimer); this.evTimer = setTimeout(() => this.nextEvent(), wait + 50); return; }
     // Не перекрываем вступление, итоги игры, сводки боя и ядерного удара — событие подождёт их закрытия
-    if (this.modals.some(m => ['intro', 'gameover', 'battle', 'nuke', 'nukereport'].includes(m.key))) return;
+    if (this.modals.some(m => ['intro', 'gameover', 'battle', 'nuke', 'nukereport', 'newsflash'].includes(m.key))) return;
     const { iid, view } = this.eventQueue.shift();
     const cat = view.cat || 'info';
     const html = `<div class="ev">
@@ -1643,6 +1648,7 @@ const UI = {
     }
     html += `<button class="btn" data-m="help">Как играть</button>
         <button class="btn" data-m="sound">Звук: ${Sound.enabled ? 'включён' : 'выключен'}</button>
+        <button class="btn" data-m="news">Новости на экране: ${this.newsModeName()}</button>
         <button class="btn" data-m="map">Карта: ${MapView.mode === 'globe' ? '3D-глобус' : '2D-проекция'}</button>
         <button class="btn btn-red" data-m="new">${Net.mp ? 'Покинуть сетевую игру' : 'Новая игра'}</button>
       </div>`;
@@ -1658,6 +1664,13 @@ const UI = {
           if (k === 'loadauto') { this.closeModal(m); return this.loadGame(true); }
           if (k === 'help') return this.openHelp();
           if (k === 'sound') { Sound.toggle(); b.textContent = 'Звук: ' + (Sound.enabled ? 'включён' : 'выключен'); return; }
+          if (k === 'news') {
+            const order = ['full', 'ticker', 'off'];
+            this.newsMode = order[(order.indexOf(this.getNewsMode()) + 1) % order.length];
+            U.storage.set('meridian_news_mode', this.newsMode);
+            b.textContent = 'Новости на экране: ' + this.newsModeName();
+            return;
+          }
           if (k === 'map') { this.toggleMapMode(); b.textContent = 'Карта: ' + (MapView.mode === 'globe' ? '3D-глобус' : '2D-проекция'); return; }
           if (k === 'new') {
             this.closeModal(m);
@@ -1976,9 +1989,82 @@ const UI = {
 
   /* ---------------- МИРОВЫЕ НОВОСТИ ---------------- */
   onNews(e) {
+    this.flashNews(e);
     this.updateNewsBadge();
     if (this.isOpen('news')) { this.newsSeen = Math.max(this.newsSeen, e.id); this.renderNews(); }
   },
+  /* ---- Новости прямо на экране (как в HOI4) ---- */
+  getNewsMode() { return this.newsMode || (this.newsMode = U.storage.get('meridian_news_mode') || 'full'); },
+  newsModeName() { return { full: 'важные окном', ticker: 'только строкой', off: 'выключены' }[this.getNewsMode()]; },
+  // Важная новость: война, мировое событие, выборы и перевороты в крупных странах
+  isMajorNews(e) {
+    if (e.k === 'war' || e.k === 'world') return true;
+    if (e.k === 'elections') {
+      const c = e.cid && Game.c(e.cid);
+      return !!c && (c.major || Game.isPower(c.ctrl) || c.pop > 4e7 || ['RUS', 'UKR', 'USA', 'CHN'].includes(c.id));
+    }
+    return false;
+  },
+  flashNews(e) {
+    const mode = this.getNewsMode();
+    if (mode === 'off' || !this.started) return;
+    if (mode === 'full' && this.isMajorNews(e)) {
+      this.newsQueue.push(e);
+      setTimeout(() => this.nextNews(), 0);
+    } else this.tickerNews(e);
+  },
+  nextNews() {
+    if (!this.started || !this.newsQueue.length || this.isOpen('newsflash')) return;
+    // Сначала — окна, которые требуют решения или уже на экране
+    if (this.eventQueue.length || this.modals.length) return;
+    const wait = this.fxBusyUntil - performance.now();
+    if (wait > 0) { clearTimeout(this.newsTimer); this.newsTimer = setTimeout(() => this.nextNews(), wait + 60); return; }
+    // Устаревшие (больше 45 дней) и лишние, если их накопилось много, уходят в бегущую строку
+    while (this.newsQueue.length > 3 || (this.newsQueue.length && Game.S.date - this.newsQueue[0].date > 45 * DAY_MS)) this.tickerNews(this.newsQueue.shift());
+    const e = this.newsQueue.shift();
+    if (!e) return;
+    this.newsSeen = Math.max(this.newsSeen, e.id);
+    this.updateNewsBadge();
+    const c = e.cid && Game.c(e.cid);
+    const icon = { war: 'i-swords', elections: 'i-vote', world: 'i-globe' }[e.k] || 'i-news';
+    const kind = { war: 'Война и мир', elections: 'Выборы и власть', world: 'Мировые события' }[e.k] || 'Новости';
+    const html = `<div class="nf k-${e.k || 'misc'}">
+      <div class="nf-mast"><span>Мировые новости</span><em>${U.fmtDate(e.date)}</em></div>
+      <div class="nf-art"><div class="nf-grid"></div><svg><use href="#${icon}"/></svg>
+        <span class="nf-stamp">${kind}</span>${c ? `<span class="nf-place">${U.esc(c.name)}</span>` : ''}</div>
+      <h2 class="nf-head">${U.esc(e.title)}</h2>
+      <p class="nf-text">${U.esc(e.text)}</p>
+      <div class="m-actions">${c ? '<button class="btn" data-map>Показать на карте</button>' : ''}<button class="btn btn-gold" data-ok>Понятно</button></div>
+    </div>`;
+    Sound.play(e.k === 'war' ? 'alert' : 'event');
+    this.openModal({
+      key: 'newsflash', cls: 'm-newsflash', html,
+      onOpen: (el, m) => {
+        el.querySelector('[data-ok]').onclick = () => { Sound.play('click'); this.closeModal(m); };
+        const map = el.querySelector('[data-map]');
+        if (map) map.onclick = () => { this.closeModal(m); this.select(c.id, true); };
+      }
+    });
+  },
+  // Бегущая строка вверху экрана: исчезает сама, клик — открыть все новости
+  tickerNews(e) {
+    if (this.getNewsMode() === 'off' || !this.started) return;
+    let box = document.getElementById('news-ticker');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'news-ticker';
+      document.getElementById('app').appendChild(box);
+    }
+    const item = document.createElement('button');
+    item.className = 'nt-item' + (this.isMajorNews(e) ? ' major' : '');
+    item.innerHTML = `<svg><use href="#i-news"/></svg><b>${U.esc(e.title)}</b><span>${U.esc(e.text)}</span>`;
+    item.onclick = () => { item.remove(); this.openNews(); };
+    box.appendChild(item);
+    requestAnimationFrame(() => item.classList.add('show'));
+    while (box.children.length > 3) box.firstElementChild.remove();
+    setTimeout(() => { item.classList.remove('show'); setTimeout(() => item.remove(), 400); }, 7000);
+  },
+
   newsList() { return Game.S ? Game.S.log.filter(e => e.cat === 'news') : []; },
   updateNewsBadge() {
     const b = document.getElementById('badge-news');
