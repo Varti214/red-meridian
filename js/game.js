@@ -327,6 +327,7 @@ const Game = {
     if (this.tickTreaties) this.tickTreaties();
     if (this.tickTrade) this.tickTrade();
     if (this.tickUN) this.tickUN();
+    if (this.tickWinter) this.tickWinter();
     for (const tag of this.alive()) this.as(tag, () => this.tickEvents());
     if (this.tickAutopilot) this.tickAutopilot();
     if (this.server) this.autoResolveEvents();

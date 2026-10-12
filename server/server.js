@@ -24,7 +24,7 @@ const ROOM_TTL_MS = 20 * 60 * 1000;   // комната без игроков ж
 const FLUSH_MS = 250;                  // как часто рассылать изменения
 
 /* ---------------- Игровое ядро: один раз компилируем, запускаем в каждой комнате ---------------- */
-const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/regions.js', 'js/combat.js', 'js/ai.js', 'js/game.js', 'js/lands.js', 'js/peace.js', 'js/resources.js', 'js/un.js', 'js/alliance.js',
+const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/regions.js', 'js/combat.js', 'js/ai.js', 'js/game.js', 'js/lands.js', 'js/peace.js', 'js/resources.js', 'js/un.js', 'js/alliance.js', 'js/winter.js',
   'js/parties.js', 'js/politics.js', 'js/events.js', 'js/ruua.js', 'js/autopilot.js'];
 const ENGINE_SRC = ENGINE_FILES.map(f => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n;\n')
   + '\n;({ Game, Geo, Bus, POWERS, DIFFICULTY });';

@@ -744,7 +744,6 @@ Object.assign(Game, {
   checkEnd() {
     const S = this.S;
     if (!S || S.over) return;
-    if (this.wastelands() >= CFG.NUCLEAR_WINTER) return this.end('defeat', 'winter', null);
     for (const tag of this.alive()) {
       const cap = this.r(this.capitalRegion(tag));
       if (!cap || cap.ctrl !== tag) {
