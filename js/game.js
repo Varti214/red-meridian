@@ -392,7 +392,10 @@ const Game = {
       this.log('nuke', 'Новая боеголовка', `Ядерный арсенал пополнен. Боеголовок в наличии: ${P.warheads}.`);
     }
     // Свои земли постепенно восстанавливают контроль
-    this.eachCountry(c => { if (c.ctrl === this.cur && c.control < 100) c.control = Math.min(100, c.control + 0.6); });
+    this.eachCountry(c => {
+      if (c.ctrl === this.cur && c.control < 100) c.control = Math.min(100, c.control + 0.6);
+      if (c.ctrl === this.cur && c.siege && c.control >= 99.5) c.siege = null;
+    });
     this.tickTraining();
     this.tickResearch();
     this.tickFocus();
@@ -1233,6 +1236,7 @@ const Game = {
     if (Y) this.takeLosses(c, Y, r.defLoss);
     else c.divs = Math.max(0, c.divs - r.defLoss);
     c.control = Math.max(0, c.control - r.ctrlDrop);
+    if (c.control < 99.5) c.siege = { by: X, from: list[0].order.air ? c.id : list[0].loc };
     if (Y && r.ratio >= 1 && c.control < 50 && !c.alerted) {
       c.alerted = true;
       this.log('alert', 'Фронт трещит', `Противник (${POWERS[X].name}) прорывает оборону: ${c.name}, контроль ${Math.round(c.control)}%.`, c.id, Y);
@@ -1346,7 +1350,7 @@ const Game = {
     c.ctrl = X;
     c.faction = POWERS[X].faction;
     c.wars = {}; c.warDays = 0; c.cb = {}; c.influence = null; c.integrate = null;
-    c.divs = 0; c.control = 100; c.sab = 0; c.sabDays = 0;
+    c.divs = 0; c.control = 100; c.sab = 0; c.sabDays = 0; c.siege = null;
     c.intel[X] = 100;
     c.lostFrom = null;
     c.alerted = false;
@@ -1365,6 +1369,7 @@ const Game = {
     const floor = r.sea ? 25 : 0;
     const before = target.control;
     target.control = Math.max(Math.min(target.control, floor), target.control - r.controlDrop);
+    if (target.control < 99.5) target.siege = { by: src.ctrl === src.id ? src.id : src.ctrl, from: src.id };
     r.controlDrop = Math.round(before - target.control);
     if (r.ratio >= 1) {
       this.log('mil', r.sea ? 'Вражеский десант' : 'Вражеское наступление',
@@ -1384,6 +1389,7 @@ const Game = {
     t.ctrl = occ.id;
     t.faction = occ.faction;
     t.control = 60;
+    t.siege = null;
     t.divs = src.divs * 0.3;
     src.divs *= 0.7;
     t.cb = {};

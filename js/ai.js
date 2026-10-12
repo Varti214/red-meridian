@@ -42,6 +42,7 @@ const AI = {
 
       // Противник понемногу восстанавливает контроль над своей территорией
       if (c.control < 100) c.control = Math.min(100, c.control + 0.15);
+      if (c.siege && c.control >= 99.5) c.siege = null;     // контроль восстановлен — регионы снова свои
 
       // Усталость от войны копится каждый день
       if (atWar && c.ctrl === c.id) c.warDays = (c.warDays || 0) + 1;

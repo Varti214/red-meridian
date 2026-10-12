@@ -902,6 +902,11 @@ const UI = {
     if (!own && !c.inert) rows += `<span>${Game.isPower(c.ctrl) ? 'Войска на участке' : 'Дивизии'}</span><b>${est.exact ? U.fmt(est.mid, 1) : '~' + est.lo + '–' + est.hi}</b>`;
     if (c.fort) rows += `<span>Укрепления</span><b>${c.fort}</b>`;
     if (war || c.control < 100) rows += `<span>Контроль</span><b>${Math.round(c.control)}%</b>`;
+    const rg = MapView.hoverRegion && MapView.hoverRegion.cid === id ? MapView.hoverRegion : null;
+    if (rg && (Regions.byCountry[id] || []).length > 1) {
+      const own = Regions.ownerOf(rg);
+      rows = `<span>Регион</span><b>${U.esc(rg.name)}</b><span>Под контролем</span><b>${U.esc(Regions.ownerName(own))}</b>` + rows;
+    }
     return `<div class="tt-title"><i style="background:${this.countryColor(c)}"></i>${U.esc(c.name)}</div>
       <div class="tt-sub">${own ? (c.core === Game.me ? 'Наша исконная земля' : 'Присоединённая территория') : U.esc(this.ownerLabel(c))}${status ? ' · ' + status : ''}</div>
       <div class="tt-grid">${rows}</div><div class="tt-hint">ЛКМ — открыть панель страны</div>`;
