@@ -75,7 +75,7 @@ const Game = {
       this.log('info', 'Новый курс', `${d.title} ${d.leader} определяет курс державы на годы вперёд.`, d.capital, tag);
     }
     this.log('intel', 'Сводка разведки', 'Блоки наблюдают друг за другом. Разведданные по большинству стран неполны.', null, null);
-    this.news('Мир в 2018 году', 'Россия, США и Китай соперничают за влияние. В Сирии идёт война, Европа спорит о брексите, а Вашингтон готовит торговую войну с Пекином.', null, 'world');
+    this.news('Мир в 2018 году', 'Россия, США и Китай соперничают за влияние. В Сирии идёт война, Европа спорит о брексите, а Вашингтон готовит торговую войну с Пекином.', null, 'world', { hist: 1 });
     Bus.emit('newGame');
   },
 
@@ -642,7 +642,7 @@ const Game = {
       this.log('mil', 'Война объявлена', `Мы начинаем войну. Противник: ${c.name}. Территория стала активным фронтом.`, id);
       AI.onPlayerDeclares(c, X);
     }
-    this.news(`Война: ${POWERS[X].name} — ${Y ? POWERS[Y].name : c.name}`, `${this.leaderTitle(X)} ${this.leaderOf(X)} объявляет войну. Мировые рынки падают.`, id, 'war');
+    this.news(`Война: ${POWERS[X].name} — ${Y ? POWERS[Y].name : c.name}`, `${this.leaderTitle(X)} ${this.leaderOf(X)} объявляет войну. Мировые рынки падают.`, id, 'war', { leader: this.leaderOf(X), by: X, vs: Y || null });
     Bus.emit('war', { by: X, target: id });
     Bus.emit('mapDirty');
     Bus.emit('stateChanged');

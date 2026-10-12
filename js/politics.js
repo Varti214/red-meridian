@@ -445,7 +445,7 @@ Object.assign(Game, {
   },
 
   /* --- Новости --- */
-  news(title, text, cid, kind) { this.log('news', title, text, cid, null, kind ? { k: kind } : null); },
+  news(title, text, cid, kind, extra) { this.log('news', title, text, cid, null, kind || extra ? Object.assign({ k: kind }, extra) : null); },
 
   tickWorldNews() {
     const S = this.S;
@@ -457,7 +457,7 @@ Object.assign(Game, {
       if (n.cond && !n.cond()) { if (S.day > at + 120) S.flags[key] = 'skipped'; continue; }
       S.flags[key] = 1;
       try { n.fx && n.fx(); } catch (e) { console.error('[news]', n.id, e); }
-      this.news(n.title, typeof n.text === 'function' ? n.text() : n.text, n.cid || null, n.kind || 'world');
+      this.news(n.title, typeof n.text === 'function' ? n.text() : n.text, n.cid || null, n.kind || 'world', { ev: n.id, hist: 1 });
     }
     // Исторические события с выбором — сначала мировая новость (и что меняется в мире), затем решения держав
     for (const e of (typeof EVENTS !== 'undefined' ? EVENTS : [])) {
@@ -469,7 +469,7 @@ Object.assign(Game, {
       S.flags[key] = 1;
       try {
         if (e.world) e.world();
-        if (!e.noNews) this.news(e.title, typeof e.text === 'function' ? e.text({}) : e.text, e.cid || null, 'world');
+        if (!e.noNews) this.news(e.title, typeof e.text === 'function' ? e.text({}) : e.text, e.cid || null, 'world', { ev: e.id, hist: 1 });
       } catch (err) { console.error('[event world]', e.id, err); }
     }
     if (S.day < (S.nextNewsDay || 4) || typeof RANDOM_NEWS === 'undefined') return;

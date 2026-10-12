@@ -148,7 +148,7 @@ const UI = {
     const key = lead + '|' + (pol && pol.ide);
     if (this.sig.leader === key) return;
     this.sig.leader = key;
-    $('#tb-nation .leader-portrait').textContent = Politics.initials(lead);
+    $('#tb-nation .leader-portrait').innerHTML = Portraits.html(lead, 'ptr-fill');
     $('#tb-nation .tb-leader').textContent = Game.leaderTitle(Game.me).split(' ')[0] + ' ' + lead;
     if (pol) $('#tb-nation').style.setProperty('--ic', IDEOLOGIES[pol.ide].color);
   },
@@ -593,6 +593,14 @@ const UI = {
     return N.id === (Game.c(r.cid) || {}).id ? (FACTIONS[N.faction] || FACTIONS.NEU).name : N.name;
   },
 
+  // Портрет правителя страны-владельца в шапке панели (как в HOI4); без правительства — код страны
+  cpLeader(r) {
+    const N = r.ctrl === Game.me ? Game.c(POWERS[Game.me].capital) : Game.ownerNation(r);
+    const pol = N && !N.inert && Game.gov(N);
+    if (!pol || !pol.leader) return `<div class="cp-flag"><span>${U.esc(r.cid)}</span></div>`;
+    return `<div class="cp-leader" style="--ic:${IDEOLOGIES[pol.ide].color}">${Portraits.html(pol.leader, 'ptr-fill')}</div>`;
+  },
+
   /* Панель региона: сам регион + государство, которое им владеет */
   countryHTML(r) {
     const S = Game.S, m = Game.mods, me = Game.me, d = this.D(), P = this.P();
@@ -620,7 +628,7 @@ const UI = {
 
     const sub = H && H.name !== r.name ? `<div class="cp-sub">${U.esc(H.name)}${Game.isCapitalRegion(r) ? ' · столичный регион' : ''}</div>` : '';
     let html = `<div class="cp-head" style="--fc:${color}">
-      <div class="cp-flag"><span>${U.esc(r.cid)}</span></div>
+      ${this.cpLeader(r)}
       <div class="cp-title"><div class="cp-name">${U.esc(r.name)}</div>${sub}<div class="cp-badges">${badges.join('')}</div></div>
       <button class="icon-btn" data-ui="close-panel" data-tip="Закрыть (Esc)"><svg><use href="#i-close"/></svg></button>
     </div><div class="cp-body">`;
@@ -1132,6 +1140,21 @@ const UI = {
   isOpen(key) { return this.modals.some(m => m.key === key); },
   modalEl(key) { const m = this.modals.find(x => x.key === key); return m ? m.wrap.firstElementChild : null; },
 
+  // Фото к событию: историческое событие — снимок из Википедии, смена власти — портрет нового лидера
+  eventPhoto(view) {
+    let p = Portraits.event(view.id);
+    if (!p && view.id === 'sys_gov') p = Portraits.leader(Game.leaderOf(Game.me));
+    if (!p) return '';
+    return `<img class="art-photo" src="${p.src}" alt="" referrerpolicy="no-referrer" data-tip="Фото: Википедия («${U.esc(p.page)}»)" onerror="this.parentNode.classList.remove('has-photo');this.remove()">`;
+  },
+  newsPhoto(e) {
+    let p = e.ev ? Portraits.event(e.ev) : null;
+    if (!p && e.leader) p = Portraits.leader(e.leader);
+    if (!p && e.k === 'elections' && e.cid) { const c = Game.c(e.cid), g = c && Game.gov(c); if (g) p = Portraits.leader(g.leader); }
+    if (!p) return '';
+    return `<img class="art-photo" src="${p.src}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.classList.remove('has-photo');this.remove()"><span class="nf-credit">Фото: Википедия</span>`;
+  },
+
   /* ---------------- СОБЫТИЯ ---------------- */
   nextEvent() {
     if (this.isOpen('event') || !this.eventQueue.length || !this.started) return;
@@ -1142,7 +1165,7 @@ const UI = {
     const { iid, view } = this.eventQueue.shift();
     const cat = view.cat || 'info';
     const html = `<div class="ev">
-      <div class="ev-art cat-${cat}"><div class="ev-art-grid"></div><svg><use href="#${view.art || 'i-flag'}"/></svg><span class="ev-stamp">${LOG_BADGES[cat] || 'Сводка'}</span></div>
+      <div class="ev-art cat-${cat}${this.eventPhoto(view) ? ' has-photo' : ''}">${this.eventPhoto(view)}<div class="ev-art-grid"></div><svg><use href="#${view.art || 'i-flag'}"/></svg><span class="ev-stamp">${LOG_BADGES[cat] || 'Сводка'}</span></div>
       <div class="ev-body">
         <div class="ev-date">${U.fmtDate(Game.S.date)}</div>
         <h2 class="ev-title">${U.esc(view.title)}</h2>
@@ -1976,7 +1999,7 @@ const UI = {
     }
     const title = pol.title || (Game.isPowerHome(c) ? Game.leaderTitle(c.ctrl) : 'Глава власти');
     h += `<div class="pol-head" style="--ic:${I.color}">
-      <div class="pol-portrait">${U.esc(Politics.initials(pol.leader))}</div>
+      <div class="pol-portrait">${Portraits.html(pol.leader, 'ptr-fill')}</div>
       <div class="pol-who"><b>${U.esc(U.cap(Game.leaderLabel(pol)))}</b><span>${U.esc(title)}</span></div>
       <div class="pol-gov">${U.esc(Game.partyName(c, pol.ide))} · ${U.esc(I.gov)}</div></div>`;
     const keys = IDE_KEYS.filter(k => (pol.pop[k] || 0) >= 0.5).sort((a, b) => pol.pop[b] - pol.pop[a]);
@@ -2052,18 +2075,30 @@ const UI = {
   getNewsMode() { return this.newsMode || (this.newsMode = U.storage.get('meridian_news_mode') || 'full'); },
   newsModeName() { return { full: 'важные окном', ticker: 'только строкой', off: 'выключены' }[this.getNewsMode()]; },
   // Важная новость: война, мировое событие, выборы и перевороты в крупных странах
+  // Окном — только по-настоящему важное: исторические события, войны с нашим участием или между державами,
+  // смена власти в державах. Остальное (ООН, договоры, чужие войны и выборы) — бегущей строкой.
   isMajorNews(e) {
-    if (e.k === 'war' || e.k === 'world') return true;
+    const me = Game.me;
+    if (e.hist) return true;
+    if (e.k === 'war') {
+      if (e.by && (e.by === me || e.vs === me || (e.vs && Game.isPower(e.vs)))) return true;
+      const c = e.cid && Game.c(e.cid);
+      return !!c && (c.id === POWERS[me].capital || Game.atWar(c, me));
+    }
     if (e.k === 'elections') {
       const c = e.cid && Game.c(e.cid);
-      return !!c && (c.major || Game.isPower(c.ctrl) || c.pop > 4e7 || ['RUS', 'UKR', 'USA', 'CHN'].includes(c.id));
+      return !!c && Game.isPowerHome(c);
     }
     return false;
   },
+  // Сколько игровых дней не показывать следующую газету (кроме новостей о нашей войне)
+  newsGapDays: 20,
   flashNews(e) {
     const mode = this.getNewsMode();
     if (mode === 'off' || !this.started) return;
-    if (mode === 'full' && this.isMajorNews(e)) {
+    const urgent = e.k === 'war' && e.by && (e.by === Game.me || e.vs === Game.me);
+    const tooSoon = Game.S && this.lastFlashDay != null && Game.S.day - this.lastFlashDay < this.newsGapDays;
+    if (mode === 'full' && this.isMajorNews(e) && (urgent || !tooSoon || e.hist)) {
       this.newsQueue.push(e);
       setTimeout(() => this.nextNews(), 0);
     } else this.tickerNews(e);
@@ -2075,17 +2110,18 @@ const UI = {
     const wait = this.fxBusyUntil - performance.now();
     if (wait > 0) { clearTimeout(this.newsTimer); this.newsTimer = setTimeout(() => this.nextNews(), wait + 60); return; }
     // Устаревшие (больше 45 дней) и лишние, если их накопилось много, уходят в бегущую строку
-    while (this.newsQueue.length > 3 || (this.newsQueue.length && Game.S.date - this.newsQueue[0].date > 45 * DAY_MS)) this.tickerNews(this.newsQueue.shift());
+    while (this.newsQueue.length > 1 || (this.newsQueue.length && Game.S.date - this.newsQueue[0].date > 45 * DAY_MS)) this.tickerNews(this.newsQueue.shift());
     const e = this.newsQueue.shift();
     if (!e) return;
     this.newsSeen = Math.max(this.newsSeen, e.id);
     this.updateNewsBadge();
+    this.lastFlashDay = Game.S.day;
     const c = e.cid && Game.c(e.cid);
     const icon = { war: 'i-swords', elections: 'i-vote', world: 'i-globe' }[e.k] || 'i-news';
     const kind = { war: 'Война и мир', elections: 'Выборы и власть', world: 'Мировые события' }[e.k] || 'Новости';
     const html = `<div class="nf k-${e.k || 'misc'}">
       <div class="nf-mast"><span>Мировые новости</span><em>${U.fmtDate(e.date)}</em></div>
-      <div class="nf-art"><div class="nf-grid"></div><svg><use href="#${icon}"/></svg>
+      <div class="nf-art${this.newsPhoto(e) ? ' has-photo' : ''}">${this.newsPhoto(e)}<div class="nf-grid"></div><svg><use href="#${icon}"/></svg>
         <span class="nf-stamp">${kind}</span>${c ? `<span class="nf-place">${U.esc(c.name)}</span>` : ''}</div>
       <h2 class="nf-head">${U.esc(e.title)}</h2>
       <p class="nf-text">${U.esc(e.text)}</p>
