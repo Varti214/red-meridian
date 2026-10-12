@@ -90,6 +90,7 @@ const UI = {
     on('war', () => Sound.play('alert'));
     on('peaceConf', p => { if (p.power === Game.me) { Sound.play('ok'); setTimeout(() => this.checkPeaceConf(), 400); } });
     on('treaty', t => this.onTreaty(t));
+    on('unResult', r => { if (this.isOpen('un')) this.renderUN(true); });
     on('mapDirty', () => MapView.refresh());
     on('mapDirtyDelayed', () => { MapView.hold(1900); MapView.refresh(); });
     on('stateChanged', () => this.renderAll());
@@ -124,6 +125,8 @@ const UI = {
     this.checkPeaceConf();
     this.updateTradeBadge();
     if (this.isOpen('trade')) this.renderTrade();
+    this.updateUNBadge();
+    if (this.isOpen('un')) this.renderUN();
     if (this.pc && this.isOpen('peace')) this.renderPeace();
     this.updateTopbar();
     this.updateClock();
@@ -181,6 +184,7 @@ const UI = {
       case 'research': return this.openResearch('research');
       case 'focus': return this.openResearch('focus');
       case 'trade': return this.openTrade();
+      case 'un': return this.openUN();
       case 'toggle-pause': return this.togglePause();
       case 'speed-up': return this.setSpeed(Game.S.speed + 1);
       case 'speed-down': return this.setSpeed(Game.S.speed - 1);
@@ -268,6 +272,7 @@ const UI = {
     else if (e.code === 'KeyD') this.openTemplates();
     else if (e.code === 'KeyN') this.openNews();
     else if (e.code === 'KeyT') this.openTrade();
+    else if (e.code === 'KeyU') this.openUN();
     else if (e.code === 'KeyI') this.toggleMapLayer();
   },
 

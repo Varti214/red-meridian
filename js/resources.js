@@ -193,7 +193,7 @@ Object.assign(Game, {
     const prod = this.sumRes(this.heldRegions(N))[k];
     return Math.floor(prod * 0.8) - sold;
   },
-  tradePrice(sellerId, tag = this.cur) {
+  tradePrice(sellerId, tag = this.cur, k) {
     if (!this.isPower(sellerId) && this.isAlly(this.c(sellerId), tag)) return TRADE.allyPrice;
     return TRADE.price;
   },
@@ -202,12 +202,12 @@ Object.assign(Game, {
     for (const t of this.alive()) {
       if (t === tag) continue;
       const free = this.sellerFree(t, k);
-      if (free > 0) out.push({ id: t, name: POWERS[t].name, power: true, free, price: this.tradePrice(t, tag), why: this.tradeBlock(t, tag) });
+      if (free > 0) out.push({ id: t, name: POWERS[t].name, power: true, free, price: this.tradePrice(t, tag, k), why: this.tradeBlock(t, tag) });
     }
     this.eachCountry(N => {
       if (N.ctrl !== N.id || N.inert) return;
       const free = this.sellerFree(N.id, k);
-      if (free > 0) out.push({ id: N.id, name: N.name, power: false, free, price: this.tradePrice(N.id, tag), why: this.tradeBlock(N.id, tag), ally: this.isAlly(N, tag) });
+      if (free > 0) out.push({ id: N.id, name: N.name, power: false, free, price: this.tradePrice(N.id, tag, k), why: this.tradeBlock(N.id, tag), ally: this.isAlly(N, tag) });
     });
     return out.sort((a, b) => (!!a.why - !!b.why) || (a.price - b.price) || (b.free - a.free));
   },
@@ -227,7 +227,7 @@ Object.assign(Game, {
     const why = this.canBuy(sellerId, k, n);
     if (why) return this.fail(why);
     const S = this.S, X = this.cur;
-    const price = this.tradePrice(sellerId);
+    const price = this.tradePrice(sellerId, X, k);
     const ex = this.contracts().find(t => t.buyer === X && t.seller === sellerId && t.res === k);
     if (ex) ex.n += n;
     else this.contracts().push({ id: 'tr' + (S.tradeSeq = (S.tradeSeq || 0) + 1), buyer: X, seller: sellerId, res: k, n, price, since: S.day });
@@ -301,7 +301,8 @@ Object.assign(Game, {
     for (const tag of this.alive()) {
       const b = this.resBalance(tag);
       let inc = 0;
-      for (const k of RES_KEYS) inc += b[k].surplus * TRADE.market;
+      const opec = k => k === 'oil' && this.inOrg && this.inOrg('OPEC', tag) ? 2 : 1;     // квоты ОПЕК+ держат цену
+      for (const k of RES_KEYS) inc += b[k].surplus * TRADE.market * opec(k);
       inc = Math.min(TRADE.marketCap, inc) * (this.underSanctions(tag) ? 0.5 : 1);
       this.P(tag).pp += inc;
       this.P(tag).market = Math.round(inc * 100) / 100;
