@@ -277,7 +277,9 @@ const Bot = {
     // Соседние государства — владельцы регионов, граничащих с нашими
     const nbIds = new Set(Game.lands().flatMap(r => this.nb(r.id)).map(id => Game.r(id)).filter(r => r && r.ctrl !== X).map(r => r.ctrl));
     const cands = [...nbIds].map(id => Game.c(id)).filter(c => c && c.ctrl === c.id && !c.inert && !c.radioactive &&
-      !Game.isPower(c.ctrl) && !Game.isAlly(c) && !c.cb[X] && Game.supplyFactor(c.id) >= 0.8);
+      !Game.isPower(c.ctrl) && !Game.isAlly(c) && !c.cb[X] && Game.supplyFactor(c.id) >= 0.8 &&
+      // Союзников других держав-игроков не трогаем: это друзья игрока
+      !Game.alive().some(t => t !== X && Game.isAlly(c, t)));
     let best = null;
     for (const c of cands) {
       const def = Game.estDivs(c).hi * (FACTION_DEF[c.faction] || 1);
