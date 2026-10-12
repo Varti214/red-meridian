@@ -45,6 +45,7 @@ const Combat = {
     };
     add('Военная доктрина', 1 + m.attackBonus);
     add(`Организация ${Math.round(org)}%`, 0.4 + 0.6 * org / 100);
+    add('Нехватка нефти', Game.resK ? Game.resK('oil') : 1);
     if (g.air) add('Воздушный десант: внезапность', g.airDays < 4 ? CFG.AIRBORNE.surprise : 1.05);
     else if (fromLoc) add('Форсирование пролива', Game.armySupply(fromLoc, target.id));
     // ПТ-артиллерия противника (только у держав-игроков) гасит танковый удар

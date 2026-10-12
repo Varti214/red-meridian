@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Красный меридиан — 2018</title>
 <meta name="description" content="Браузерная гранд-стратегия в духе Hearts of Iron IV: современный мир с 2018 года: Россия, США и Китай, выборы, перевороты и мировые новости.">
-<link rel="stylesheet" href="css/style.css?v=32">
+<link rel="stylesheet" href="css/style.css?v=34">
 </head>
 <body>
 
@@ -23,6 +23,11 @@
     <symbol id="i-eye" viewBox="0 0 24 24"><path fill="currentColor" d="M12 5C6 5 2 12 2 12s4 7 10 7 10-7 10-7-4-7-10-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l8 3v6c0 5-3.4 9.3-8 11-4.6-1.7-8-6-8-11V5z"/></symbol>
     <symbol id="i-flag" viewBox="0 0 24 24"><path fill="currentColor" d="M5 2h2v20H5zm3 1h11l-3 4 3 4H8z"/></symbol>
+    <symbol id="i-oil" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2c3.5 5 6 8.3 6 11.5A6 6 0 0 1 6 13.5C6 10.3 8.5 7 12 2zm-2.6 12.2a2.8 2.8 0 0 0 2.6 3v-1.8a1.1 1.1 0 0 1-.9-1.2z"/></symbol>
+    <symbol id="i-gas" viewBox="0 0 24 24"><path fill="currentColor" d="M13 2s1 3.2-1.4 6.1C9.9 10.2 7 12 7 15.6A5.2 5.2 0 0 0 12 21a5.2 5.2 0 0 0 5-5.4c0-2.6-1.4-4.2-2.2-5 .1 1.6-.6 2.8-1.6 3.3.6-3.6.4-8.3-.2-11.9zM12 19a2.4 2.4 0 0 1-2.3-2.5c0-1.5 1-2.3 1.9-3.4.3 1.4 1.3 1.9 2 2.6.5.5.7 1 .7 1.6A2.3 2.3 0 0 1 12 19z"/></symbol>
+    <symbol id="i-steel" viewBox="0 0 24 24"><path fill="currentColor" d="M4 15h16l2 5H2zm3-5h10l1.5 4h-13zm3-5h4l1.2 4H8.8z"/></symbol>
+    <symbol id="i-rare" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l7 5-2.7 13H7.7L5 7zm0 3.2L7.4 8.5l2 9.5h5.2l2-9.5z"/></symbol>
+    <symbol id="i-trade" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4l-4 4 4 4V9h9V7H7zm10 8v3H8v2h9v3l4-4z"/></symbol>
     <symbol id="i-book" viewBox="0 0 24 24"><path fill="currentColor" d="M9 2h6v2h-1v5.2l5.6 9.6A2 2 0 0 1 17.9 22H6.1a2 2 0 0 1-1.7-3.2L10 9.2V4H9z"/></symbol>
     <symbol id="i-tree" viewBox="0 0 24 24"><path fill="currentColor" d="M9 2h6v5H9zM3 15h6v5H3zm12 0h6v5h-6zM11 7h2v3h6v5h-2v-3H7v3H5v-5h6z"/></symbol>
     <symbol id="i-menu" viewBox="0 0 24 24"><path fill="currentColor" d="M3 5h18v2.5H3zm0 5.75h18v2.5H3zM3 16.5h18V19H3z"/></symbol>
@@ -77,6 +82,7 @@
     </div>
     <div class="tb-right">
       <button class="tb-btn" data-ui="research" title="Исследования (R)"><svg><use href="#i-book"/></svg><span>Наука</span><em class="tb-badge hidden" id="badge-research"></em></button>
+      <button class="tb-btn" data-ui="trade" title="Ресурсы и торговля (T)"><svg><use href="#i-trade"/></svg><span>Торговля</span><em class="tb-badge hidden" id="badge-trade"></em></button>
       <button class="tb-btn" data-ui="news" title="Мировые новости (N)"><svg><use href="#i-news"/></svg><span>Новости</span><em class="tb-badge hidden" id="badge-news"></em></button>
       <button class="tb-btn" data-ui="focus" title="Национальные фокусы (F)"><svg><use href="#i-tree"/></svg><span>Фокусы</span><em class="tb-badge hidden" id="badge-focus"></em></button>
       <div class="tb-clock">
@@ -161,30 +167,32 @@
 </div>
 
 <!-- 3D-движок: Three.js + globe.gl одним локальным файлом (без интернета) -->
-<script src="vendor/globe-bundle.min.js?v=32" onerror="window.__vendorFailed=true"></script>
+<script src="vendor/globe-bundle.min.js?v=34" onerror="window.__vendorFailed=true"></script>
 <!-- Границы стран: Natural Earth 1:110m -->
-<script src="data/countries.js?v=32" onerror="window.__geoFailed=true"></script>
-<script src="js/util.js?v=32"></script>
-<script src="js/data.js?v=32"></script>
-<script src="js/focuses.js?v=32"></script>
-<script src="js/geo.js?v=32"></script>
-<script src="js/regions.js?v=32"></script>
-<script src="js/combat.js?v=32"></script>
-<script src="js/ai.js?v=32"></script>
-<script src="js/game.js?v=32"></script>
-<script src="js/lands.js?v=32"></script>
-<script src="js/peace.js?v=32"></script>
-<script src="js/parties.js?v=32"></script>
-<script src="js/politics.js?v=32"></script>
-<script src="js/events.js?v=32"></script>
-<script src="js/ruua.js?v=32"></script>
-<script src="js/autopilot.js?v=32"></script>
-<script src="js/net.js?v=32"></script>
-<script src="js/audio.js?v=32"></script>
-<script src="js/labels.js?v=32"></script>
-<script src="js/map.js?v=32"></script>
-<script src="js/ui.js?v=32"></script>
-<script src="js/ui-peace.js?v=32"></script>
-<script src="js/main.js?v=32"></script>
+<script src="data/countries.js?v=34" onerror="window.__geoFailed=true"></script>
+<script src="js/util.js?v=34"></script>
+<script src="js/data.js?v=34"></script>
+<script src="js/focuses.js?v=34"></script>
+<script src="js/geo.js?v=34"></script>
+<script src="js/regions.js?v=34"></script>
+<script src="js/combat.js?v=34"></script>
+<script src="js/ai.js?v=34"></script>
+<script src="js/game.js?v=34"></script>
+<script src="js/lands.js?v=34"></script>
+<script src="js/peace.js?v=34"></script>
+<script src="js/resources.js?v=34"></script>
+<script src="js/parties.js?v=34"></script>
+<script src="js/politics.js?v=34"></script>
+<script src="js/events.js?v=34"></script>
+<script src="js/ruua.js?v=34"></script>
+<script src="js/autopilot.js?v=34"></script>
+<script src="js/net.js?v=34"></script>
+<script src="js/audio.js?v=34"></script>
+<script src="js/labels.js?v=34"></script>
+<script src="js/map.js?v=34"></script>
+<script src="js/ui.js?v=34"></script>
+<script src="js/ui-peace.js?v=34"></script>
+<script src="js/ui-trade.js?v=34"></script>
+<script src="js/main.js?v=34"></script>
 </body>
 </html>

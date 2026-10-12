@@ -89,6 +89,7 @@ const Regions = {
     }
     this.link();
     this.setup();
+    if (typeof Resources !== 'undefined') Resources.build();
   },
 
   // Внешние кольца всех частей страны

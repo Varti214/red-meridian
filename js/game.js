@@ -231,7 +231,7 @@ const Game = {
 
 
   /* ---------------- ЕЖЕДНЕВНЫЕ ПРИРОСТЫ (для текущей державы) ---------------- */
-  dailyPP() { return Math.max(0.3, (CFG.PP_BASE + this.mods.pp + this.allies().length * 0.1) * this.diff.pp); },
+  dailyPP() { return Math.max(0.3, (CFG.PP_BASE + this.mods.pp + this.allies().length * 0.1) * this.diff.pp * (this.resK ? this.resK('gas') : 1)); },
   dailyRP() { return (CFG.RP_BASE + this.playerFactories() * CFG.RP_PER_FACTORY) * (1 + this.mods.rp) * 1.1; },
 
   /* ---------------- ИЗМЕНЕНИЕ РЕСУРСОВ (события, ИИ) ---------------- */
@@ -325,6 +325,7 @@ const Game = {
     this.tickRUUA();
     this.tickScheduled();
     if (this.tickTreaties) this.tickTreaties();
+    if (this.tickTrade) this.tickTrade();
     for (const tag of this.alive()) this.as(tag, () => this.tickEvents());
     if (this.tickAutopilot) this.tickAutopilot();
     if (this.server) this.autoResolveEvents();
@@ -359,7 +360,8 @@ const Game = {
 
   tickTraining() {
     const P = this.P();
-    for (const t of P.training) t.daysLeft--;
+    const k = this.resK ? this.resK('steel') : 1;       // без стали заводы работают медленнее
+    for (const t of P.training) t.daysLeft -= k;
     const done = P.training.filter(t => t.daysLeft <= 0);
     if (!done.length) return;
     P.training = P.training.filter(t => t.daysLeft > 0);
@@ -371,7 +373,8 @@ const Game = {
 
   tickResearch() {
     const P = this.P();
-    for (const r of P.research) r.daysLeft--;
+    const k = this.resK ? this.resK('rare') : 1;        // без редких металлов наука идёт медленнее
+    for (const r of P.research) r.daysLeft -= k;
     const done = P.research.filter(r => r.daysLeft <= 0);
     if (!done.length) return;
     P.research = P.research.filter(r => r.daysLeft > 0);

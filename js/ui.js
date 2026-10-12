@@ -122,6 +122,8 @@ const UI = {
     $$('.hidden-ui').forEach(el => el.classList.remove('hidden-ui'));
     this.renderAll();
     this.checkPeaceConf();
+    this.updateTradeBadge();
+    if (this.isOpen('trade')) this.renderTrade();
     if (this.pc && this.isOpen('peace')) this.renderPeace();
     this.updateTopbar();
     this.updateClock();
@@ -178,6 +180,7 @@ const UI = {
     switch (cmd) {
       case 'research': return this.openResearch('research');
       case 'focus': return this.openResearch('focus');
+      case 'trade': return this.openTrade();
       case 'toggle-pause': return this.togglePause();
       case 'speed-up': return this.setSpeed(Game.S.speed + 1);
       case 'speed-down': return this.setSpeed(Game.S.speed - 1);
@@ -264,6 +267,7 @@ const UI = {
     else if (e.code === 'KeyM') this.toggleMapMode();
     else if (e.code === 'KeyD') this.openTemplates();
     else if (e.code === 'KeyN') this.openNews();
+    else if (e.code === 'KeyT') this.openTrade();
     else if (e.code === 'KeyI') this.toggleMapLayer();
   },
 
@@ -625,6 +629,9 @@ const UI = {
     html += '<div class="cp-stats">';
     html += this.stat('Заводы региона', U.fmt(r.factories));
     html += this.stat('Население', U.fmtPop(r.pop));
+    const rres = Game.regionRes(r);
+    if (rres) html += `<div class="st st-wide"><span class="st-l">Месторождения</span><div class="cp-res">${RES_KEYS.filter(k => rres[k]).map(k =>
+      `<span style="--rc:${RES[k].color}" data-tip="${RES[k].name}: ${rres[k]} ед. добычи"><svg><use href="#${RES[k].icon}"/></svg>${rres[k]}</span>`).join('')}</div></div>`;
     if (own) {
       const mp = r.radioactive ? 0 : r.pop * CFG.MP_PER_POP * (r.core === me ? 1 : CFG.ANNEXED_MP) * (1 + m.mpMult);
       html += this.stat('Призыв в день', U.fmt(mp, 2) + ' тыс.');

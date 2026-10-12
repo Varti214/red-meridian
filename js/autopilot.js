@@ -60,6 +60,24 @@ const Bot = {
     if (S.day % 2 === 0) this.armies();
     if (S.day % 10 === 0) this.diplomacy();
     if (S.day % 15 === 0) this.expand();
+    if (S.day % 7 === 3) this.trade();
+  },
+
+  /* Торговля: закрыть нехватку ресурсов самым дешёвым импортом, лишние контракты — разорвать */
+  trade() {
+    if (!Game.resBalance) return;
+    const X = Game.cur, P = Game.P();
+    const b = Game.resBalance(X);
+    for (const k of RES_KEYS) {
+      const v = b[k];
+      if (v.short > 0.1 && P.pp > 25) {
+        const p = Game.tradePartners(k, X).find(x => !x.why);
+        if (p) Game.buyRes(p.id, k, Math.min(p.free, Math.ceil(v.need - v.have)));
+      } else if (v.have - v.need >= 1.5) {
+        const c = Game.contracts().find(t => t.buyer === X && t.res === k);
+        if (c) Game.cancelTrade(c.id);
+      }
+    }
   },
 
   events() {

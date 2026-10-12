@@ -24,7 +24,7 @@ const ROOM_TTL_MS = 20 * 60 * 1000;   // комната без игроков ж
 const FLUSH_MS = 250;                  // как часто рассылать изменения
 
 /* ---------------- Игровое ядро: один раз компилируем, запускаем в каждой комнате ---------------- */
-const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/regions.js', 'js/combat.js', 'js/ai.js', 'js/game.js', 'js/lands.js', 'js/peace.js',
+const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/regions.js', 'js/combat.js', 'js/ai.js', 'js/game.js', 'js/lands.js', 'js/peace.js', 'js/resources.js',
   'js/parties.js', 'js/politics.js', 'js/events.js', 'js/ruua.js', 'js/autopilot.js'];
 const ENGINE_SRC = ENGINE_FILES.map(f => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n;\n')
   + '\n;({ Game, Geo, Bus, POWERS, DIFFICULTY });';
@@ -144,7 +144,7 @@ function wireRegion(r) {
 function topState(S) {
   return {
     day: S.day, date: S.date, tension: S.tension, speed: S.speed, paused: S.paused,
-    pwars: S.pwars, over: S.over, victoryShown: S.victoryShown, powers: S.powers, difficulty: S.difficulty, ruua: S.ruua, uaw: S.uaw, confs: S.confs || []
+    pwars: S.pwars, over: S.over, victoryShown: S.victoryShown, powers: S.powers, difficulty: S.difficulty, ruua: S.ruua, uaw: S.uaw, confs: S.confs || [], trade: S.trade || []
   };
 }
 
@@ -267,7 +267,7 @@ function runLoop(room) {
 }
 
 /* ---------------- Действия игроков ---------------- */
-const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'saveTemplate', 'deleteTemplate', 'peace', 'signTreaty', 'proposeTreaty', 'influence', 'integrate', 'spy',
+const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'saveTemplate', 'deleteTemplate', 'peace', 'signTreaty', 'proposeTreaty', 'buyRes', 'cancelTrade', 'toggleEmbargo', 'influence', 'integrate', 'spy',
   'nuke', 'startResearch', 'startFocus', 'chooseEvent', 'setPaused', 'setSpeed', 'supportParty', 'meddle', 'coup', 'setAssist', 'orderAirborne']);
 
 function doAction(room, p, name, args) {
