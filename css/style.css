@@ -803,6 +803,8 @@ body.log-collapsed #dock { right: var(--gap); }
 .toast.show { opacity: 1; transform: none; }
 .toast-ok { border-left-color: var(--green); }
 .toast-err { border-left-color: var(--red-2); color: #ffd0cc; }
+.toast-click { cursor: pointer; pointer-events: auto; }
+.toast-click:hover { filter: brightness(1.15); }
 .toast-warn { border-left-color: var(--orange); }
 
 /* ---------------- ВСПЫШКА И ТРЯСКА ---------------- */

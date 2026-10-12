@@ -1077,14 +1077,18 @@ const UI = {
   },
 
   /* ---------------- УВЕДОМЛЕНИЯ ---------------- */
-  toast(msg, type = 'info') {
+  toast(msg, type = 'info', onClick) {
+    // Одинаковые уведомления подряд не дублируем
+    const last = this.el.toasts.lastElementChild;
+    if (last && last.textContent === msg) return;
     const t = document.createElement('div');
-    t.className = 'toast toast-' + type;
+    t.className = 'toast toast-' + type + (onClick ? ' toast-click' : '');
     t.textContent = msg;
+    if (onClick) t.addEventListener('click', () => { t.remove(); onClick(); });
     this.el.toasts.appendChild(t);
     requestAnimationFrame(() => t.classList.add('show'));
-    setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, type === 'err' ? 2600 : 3200);
-    while (this.el.toasts.children.length > 4) this.el.toasts.firstElementChild.remove();
+    setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, onClick ? 5000 : type === 'err' ? 2600 : 3200);
+    while (this.el.toasts.children.length > 3) this.el.toasts.firstElementChild.remove();
   },
 
   flash(strong) {
@@ -1474,6 +1478,12 @@ const UI = {
   onBattle(r) {
     MapView.fxBattle(r.targetId, r.ratio >= 1, r.by);
     Sound.play('battle');
+    if (this.quiet()) {
+      const t = r.capitulated ? (r.liberation ? 'Освобождено' : 'Взято') + ': ' + r.targetName
+        : (r.ratio >= 1 ? 'Наступление: ' : 'Атака отбита: ') + r.targetName + (r.ratio >= 1 ? ` (контроль ${Math.round(r.controlAfter)}%)` : '');
+      this.toast(t + ' · сводка ›', r.capitulated || r.ratio >= 1 ? 'ok' : 'warn', () => this.showBattleReport(r));
+      return;
+    }
     setTimeout(() => this.showBattleReport(r), 650);
   },
 
@@ -1743,6 +1753,7 @@ const UI = {
     html += `<button class="btn" data-m="help">Как играть</button>
         <button class="btn" data-m="sound">Звук: ${Sound.enabled ? 'включён' : 'выключен'}</button>
         <button class="btn" data-m="news">Новости на экране: ${this.newsModeName()}</button>
+        <button class="btn" data-m="notify">Уведомления: ${this.notifyName()}</button>
         <button class="btn" data-m="map">Карта: ${MapView.mode === 'globe' ? '3D-глобус' : '2D-проекция'}</button>
         <button class="btn btn-red" data-m="new">${Net.mp ? 'Покинуть сетевую игру' : 'Новая игра'}</button>
       </div>`;
@@ -1758,6 +1769,12 @@ const UI = {
           if (k === 'loadauto') { this.closeModal(m); return this.loadGame(true); }
           if (k === 'help') return this.openHelp();
           if (k === 'sound') { Sound.toggle(); b.textContent = 'Звук: ' + (Sound.enabled ? 'включён' : 'выключен'); return; }
+          if (k === 'notify') {
+            this.notifyMode = this.quiet() ? 'all' : 'quiet';
+            U.storage.set('meridian_notify', this.notifyMode);
+            b.textContent = 'Уведомления: ' + this.notifyName();
+            return;
+          }
           if (k === 'news') {
             const order = ['full', 'ticker', 'off'];
             this.newsMode = order[(order.indexOf(this.getNewsMode()) + 1) % order.length];
@@ -2088,6 +2105,10 @@ const UI = {
     if (this.isOpen('news')) { this.newsSeen = Math.max(this.newsSeen, e.id); this.renderNews(); }
   },
   /* ---- Новости прямо на экране (как в HOI4) ---- */
+  // Уведомления: «тихо» (по умолчанию) — сводки боёв и мелкие новости не всплывают; «все» — как раньше
+  getNotify() { return this.notifyMode || (this.notifyMode = U.storage.get('meridian_notify') || 'quiet'); },
+  quiet() { return this.getNotify() === 'quiet'; },
+  notifyName() { return this.quiet() ? 'только важные' : 'все'; },
   getNewsMode() { return this.newsMode || (this.newsMode = U.storage.get('meridian_news_mode') || 'full'); },
   newsModeName() { return { full: 'важные окном', ticker: 'только строкой', off: 'выключены' }[this.getNewsMode()]; },
   // Важная новость: война, мировое событие, выборы и перевороты в крупных странах
@@ -2107,6 +2128,12 @@ const UI = {
     }
     return false;
   },
+  // Бегущая строка в тихом режиме: войны, исторические события, выборы в крупных странах
+  tickerWorthy(e) {
+    if (e.hist || e.k === 'war' || e.k === 'world') return true;
+    const c = e.cid && Game.c(e.cid);
+    return e.k === 'elections' && !!c && (c.major || c.pop > 3e7 || Game.isPowerHome(c));
+  },
   // Сколько игровых дней не показывать следующую газету (кроме новостей о нашей войне)
   newsGapDays: 20,
   flashNews(e) {
@@ -2114,10 +2141,15 @@ const UI = {
     if (mode === 'off' || !this.started) return;
     const urgent = e.k === 'war' && e.by && (e.by === Game.me || e.vs === Game.me);
     const tooSoon = Game.S && this.lastFlashDay != null && Game.S.day - this.lastFlashDay < this.newsGapDays;
-    if (mode === 'full' && this.isMajorNews(e) && (urgent || !tooSoon || e.hist)) {
+    // Историческое событие с выбором и так придёт окном — газета не нужна
+    const dup = e.ev && typeof EVENTS !== 'undefined' && EVENTS.some(x => x.id === e.ev && (!x.powers || x.powers.includes(Game.me)));
+    const gap = this.quiet() ? 45 : this.newsGapDays;
+    const soon = Game.S && this.lastFlashDay != null && Game.S.day - this.lastFlashDay < gap;
+    if (this.quiet() && !e.k && !urgent) return;            // мелкие новости — только в журнал и архив (N)
+    if (mode === 'full' && !dup && this.isMajorNews(e) && (urgent || !soon)) {
       this.newsQueue.push(e);
       setTimeout(() => this.nextNews(), 0);
-    } else this.tickerNews(e);
+    } else if (!this.quiet() || this.tickerWorthy(e)) this.tickerNews(e);
   },
   nextNews() {
     if (!this.started || !this.newsQueue.length || this.isOpen('newsflash')) return;

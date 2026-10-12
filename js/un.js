@@ -168,7 +168,12 @@ Object.assign(Game, {
     for (const id of voters) if (!this.voterPower(id)) res.votes[id] = this.aiVote(id, res);
     for (const id of voters) {
       const tag = this.voterPower(id);
-      if (tag) this.askVote(tag, res);
+      if (!tag) continue;
+      const t = res.target;
+      const concerns = T.body === 'SC' || t === tag || (this.allied && this.allied(tag, t)) ||
+        (this.isPower(t) ? this.powersAtWar(tag, t) : (this.c(t) && (this.c(t).wars[tag] || this.isAlly(this.c(t), tag))));
+      if (concerns) this.askVote(tag, res);
+      else { res.votes[id] = this.aiVote(id, res); this.log('dip', 'ООН: голос МИД', `Резолюция «${T.name}» (${res.tName}) нас не касается — МИД голосует сам: ${{ yes: 'за', no: 'против', abs: 'воздержались', veto: 'вето' }[res.votes[id]]}.`, null, tag); }
     }
     this.news(`ООН: «${T.name}» — ${tName}`, `${T.body === 'SC' ? 'Совет Безопасности' : 'Генеральная Ассамблея'} рассматривает проект резолюции. Внёс: ${by}. Голосование — 10 дней.`, this.isPower(target) ? this.homeOf(target) : target, 'world');
     Bus.emit('stateChanged');

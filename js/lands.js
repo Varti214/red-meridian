@@ -584,14 +584,6 @@ Object.assign(Game, {
     this.retreatArmies(t, Y);
     this.log('alert', 'Регион потерян', `Фронт прорван. Под контролем противника (${N.name}): ${t.name}.`, t.id, Y);
     Bus.emit('mapDirty');
-    if (t.id !== this.capitalRegion(Y)) {
-      this.popup({
-        id: 'sys_lost_' + t.id, art: 'i-swords', cat: 'alert',
-        title: 'Прорыв фронта',
-        text: `Противник прорвал оборону. Регион «${t.name}» оккупирован, его заводы больше не работают на нас. Освободить его можно наступлением.`,
-        options: [{ label: 'Ни шагу назад!', tip: 'Организуйте контрнаступление', fx: () => {} }]
-      }, {}, Y);
-    }
     this.checkEnd();
   },
 
