@@ -88,6 +88,8 @@ const UI = {
     on('enemyNuke', r => this.onEnemyNuke(r));
     on('enemyAttack', r => this.onEnemyAttack(r));
     on('war', () => Sound.play('alert'));
+    on('peaceConf', p => { if (p.power === Game.me) { Sound.play('ok'); setTimeout(() => this.checkPeaceConf(), 400); } });
+    on('treaty', t => this.onTreaty(t));
     on('mapDirty', () => MapView.refresh());
     on('mapDirtyDelayed', () => { MapView.hold(1900); MapView.refresh(); });
     on('stateChanged', () => this.renderAll());
@@ -119,6 +121,8 @@ const UI = {
     this.rebuildLog();
     $$('.hidden-ui').forEach(el => el.classList.remove('hidden-ui'));
     this.renderAll();
+    this.checkPeaceConf();
+    if (this.pc && this.isOpen('peace')) this.renderPeace();
     this.updateTopbar();
     this.updateClock();
     this.setNetStatus(Net.mp ? 'ok' : 'off');
@@ -199,6 +203,7 @@ const UI = {
       case 'justify': return run('justify', id);
       case 'declare': return this.confirmDeclare(id);
       case 'peace': return run('peace', id);
+      case 'treaty': return this.openPeace(a.dataset.conf ? { conf: a.dataset.conf } : { id });
       case 'influence': return run('influence', id);
       case 'integrate': return run('integrate', id);
       case 'spy': return run('spy', id, a.dataset.op);
@@ -520,6 +525,7 @@ const UI = {
     return JSON.stringify([r.id, r.ctrl, N.faction, Game.atWar(r), N.cb && N.cb[me] === true, N.id && !!Game.justifying(N), !!N.influence, !!N.integrate, r.radioactive,
       r.factories, r.fort, Math.round(r.control), N.id ? Math.round(Game.intel(N) / 5) : 0, N.sab, est.lo, est.hi, Math.round(r.pop / 1e5), N.id ? N.factories : 0,
       reasons, P.divs, P.warheads, Game.S.tension >= 50, Math.round(Game.S.ruua || 0), Math.round(Game.S.uaw || 0), Math.round(Game.S.tension / 4), Game.mods.nukes, P.techs.length,
+      N.capitulated, (Game.myConf(me) || {}).id, N.id && !Game.isPower(r.ctrl) ? Game.warScore(me, N) : 0,
       N.id ? this.polSig(r.ctrl === me ? Game.c(POWERS[me].capital) : N) : 0]);
   },
 
@@ -697,10 +703,15 @@ const UI = {
     } else if (N) {
       const c = N;
       html += `<div class="cp-sec"><div class="cp-sec-title">Дипломатия: ${U.esc(Y ? POWERS[Y].name : c.name)}</div>`;
-      if (war) {
-        html += this.actBtn({ act: 'peace', id: c.id, label: 'Предложить мир', icon: 'i-flag', why: Game.canPeace(c),
-          sub: rival ? 'Решение примет второй игрок' : `Шанс согласия ${U.pct(Game.peaceChance(c))}`, cost: this.costTag(CFG.PEACE_PP),
-          tip: 'Мир на условиях статус-кво.' });
+      const conf = c.capitulated === me && Game.myConf(me);
+      if (conf) {
+        html += this.actBtn({ act: 'treaty', id: r.id, data: `data-conf="${conf.id}"`, label: 'Мирная конференция', icon: 'i-flag', cls: 'act-gold',
+          sub: 'Противник капитулировал: 100 очков на требования', tip: 'Заберите регионы, сделайте страну марионеткой, смените режим или потребуйте репарации.' });
+      } else if (war) {
+        const score = rival ? Game.powerWarScore(me, Y) : Game.warScore(me, c);
+        html += this.actBtn({ act: 'treaty', id: rival ? r.id : c.id, label: 'Мирные переговоры', icon: 'i-flag', why: Game.canPeace(c),
+          sub: `Очки войны: ${score} · ${rival ? 'решение примет второй игрок' : 'белый мир: шанс ' + U.pct(Game.peaceChance(c))}`, cost: this.costTag(CFG.PEACE_PP),
+          tip: 'Потребуйте регионы и другие условия на очки войны — или предложите белый мир.' });
       } else if (c.cb[me] === true) {
         html += this.actBtn({ act: 'declare', id: c.id, label: 'Объявить войну', icon: 'i-swords', cls: 'act-danger',
           sub: `Напряжённость +${U.fmt(Game.declareTension(c), 0)}%`, cost: '' });

@@ -31,7 +31,7 @@ const AI = {
         if (v != null && v > base) c.intel[tag] = Math.max(base, v - 0.08);
       }
 
-      if (c.radioactive) return;
+      if (c.radioactive || c.capitulated) return;
       const atWar = tags.some(tag => c.wars[tag]);
 
       // Рост гарнизонов
@@ -41,7 +41,8 @@ const AI = {
       if (atWar) rate *= 1.6;
       rate *= diff.aiGrowth;
       const cap = c.baseDivs * (1 + (bloc ? t / 100 : t / 250)) + (atWar ? c.baseDivs * 0.5 + 2 : 0);
-      if (c.divs < cap) c.divs = Math.min(cap, c.divs + rate);
+      const capD = c.demil > S.day ? Math.min(cap, c.baseDivs * 0.2) : cap;     // демилитаризация по договору
+      if (c.divs < capD) c.divs = Math.min(capD, c.divs + rate);
 
       // Усталость от войны копится каждый день
       if (atWar && c.ctrl === c.id) c.warDays = (c.warDays || 0) + 1;
@@ -177,7 +178,7 @@ const AI = {
       const key = 'nextPeaceOffer_' + X;
       if (S.day < (S.flags[key] || 0)) continue;
       for (const c of Game.fronts(X)) {
-        if (c.ctrl !== c.id || c.radioactive || !c.wars[X]) continue;
+        if (c.ctrl !== c.id || c.radioactive || !c.wars[X] || c.capitulated) continue;
         const p = 0.002 + (c.warDays || 0) / 365 * 0.004 + (c.control < 50 ? 0.004 : 0);
         if (!U.chance(p)) continue;
         S.flags[key] = S.day + 30;

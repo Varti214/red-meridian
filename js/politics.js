@@ -365,6 +365,7 @@ Object.assign(Game, {
   },
 
   leaveBloc(c, why) {
+    if (c.puppet && this.isPower(c.puppet) && !this.P(c.puppet).out) return;     // марионетка не уходит
     const fac = FACTIONS[c.faction];
     c.faction = 'NEU';
     c.integrate = null;

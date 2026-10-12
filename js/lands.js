@@ -544,24 +544,7 @@ Object.assign(Game, {
     const held = this.heldRegions(N).length;
     if ((cap && cap.ctrl !== N.id) || held === 0) this.capitulate(N, X);
   },
-  capitulate(c, X, opts = {}) {
-    if (this.concludePeace) return this.concludePeace(c, X, opts);    // мирная конференция (если подключена)
-    const wasIndependent = c.ctrl === c.id;
-    const leaderOf = Object.entries(FACTIONS).find(([, f]) => f.leader === c.id);
-    const keep = this.annexNation(c, X, opts);
-    if (!opts.peaceful) this.addTension(c.major ? 8 : 3);
-    this.P(X).stats.annexed++;
-    if (wasIndependent) {
-      this.log('success', 'Капитуляция', `${c.name} капитулирует. Земли присоединены, заводов получено: ${keep}.`, c.id, X);
-      this.news(`${c.name} капитулирует`, `Страна переходит под контроль державы «${POWERS[X].name}».`, c.id, 'war');
-    }
-    if (leaderOf && wasIndependent) {
-      const facKey = leaderOf[0];
-      this.eachCountry(t => { if (t.faction === facKey && t.ctrl === t.id) t.divs *= 0.8; });
-      this.log('alert', 'Блок обезглавлен', `Лидер блока «${FACTIONS[facKey].name}» повержен. Армии его союзников деморализованы: −20% дивизий.`, null, null);
-    }
-    return keep;
-  },
+  // capitulate — в peace.js (мирная конференция)
 
   /* --- Наступление ИИ на регион державы --- */
   enemyOffensive(src, target) {

@@ -188,6 +188,8 @@ const MapView = {
     const target = targets && targets.has(id);
     if (target) strokeColor = '#ffe14d';
     if (sel) strokeColor = COLORS.selected;
+    // Регион, который мы требуем в мирном договоре
+    if (typeof UI !== 'undefined' && UI.pc && UI.pc.sel.has(id)) { cap = U.shade(POWERS[me].color, 0.12); strokeColor = '#ffe680'; }
 
     const alt = 0.006 + (Game.isPower(r.ctrl) ? 0.004 : 0) + (front ? 0.006 : 0) + (hov ? 0.008 : 0) + (sel ? 0.016 : 0) + (target ? 0.006 : 0);
     return { cap, capA: U.rgba(cap, 0.93), side: U.rgba(side, 0.9), stroke: strokeColor, alt };
