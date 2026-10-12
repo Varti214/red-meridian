@@ -122,12 +122,7 @@ const UI = {
     this.rebuildLog();
     $$('.hidden-ui').forEach(el => el.classList.remove('hidden-ui'));
     this.renderAll();
-    this.checkPeaceConf();
-    this.updateTradeBadge();
-    if (this.isOpen('trade')) this.renderTrade();
-    this.updateUNBadge();
-    if (this.isOpen('un')) this.renderUN();
-    if (this.pc && this.isOpen('peace')) this.renderPeace();
+    this.updateWindows();
     this.updateTopbar();
     this.updateClock();
     this.setNetStatus(Net.mp ? 'ok' : 'off');
@@ -390,18 +385,41 @@ const UI = {
   },
 
   /* ---------------- ОБНОВЛЕНИЕ КАЖДЫЙ ДЕНЬ ---------------- */
+  // На высокой скорости дни идут по 10 в секунду: часы и армии обновляем каждый день,
+  // а тяжёлые панели — не чаще 4 раз в секунду
   onTick() {
     if (!this.P()) return;
     if (this.selectedArmy && !Game.army(this.selectedArmy)) this.selectArmy(null);
     MapView.refreshArmies();
-    this.updateTopbar();
     this.updateClock();
+    const now = performance.now();
+    if (now - (this.lastPanels || 0) < 250) {
+      if (!this.panelTimer) this.panelTimer = setTimeout(() => { this.panelTimer = null; this.onTick(); }, 260 - (now - (this.lastPanels || 0)));
+      return;
+    }
+    this.lastPanels = now;
+    this.updateTopbar();
     this.renderAll();
+    this.updateWindows();
     this.updateLive();
     if (this.tipTarget && this.tipTarget.dataset.tipk && document.body.contains(this.tipTarget)) {
       this.showTip(this.tipFns[this.tipTarget.dataset.tipk].call(this));
     } else if (this.mapHoverId && !this.tipTarget) {
       this.showTip(this.countryTip(this.mapHoverId));
+    }
+  },
+
+  // Открытые окна и значки на кнопках: конференция, торговля, ООН
+  updateWindows() {
+    this.checkPeaceConf();
+    this.updateTradeBadge();
+    if (this.isOpen('trade')) this.renderTrade();
+    this.updateUNBadge();
+    if (this.isOpen('un')) this.renderUN();
+    // Окно договора перерисовываем, только если изменились очки или список земель (иначе сбивается прокрутка)
+    if (this.pc && this.isOpen('peace')) {
+      const d = this.peaceData(), sig = d.score + '|' + d.regions.map(r => r.id + ':' + r.cost).join(',') + '|' + d.terms.join(',');
+      if (sig !== this.pcSig) { this.pcSig = sig; this.renderPeace(); }
     }
   },
 

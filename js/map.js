@@ -483,7 +483,13 @@ const GlobeRenderer = {
     if (!this.g) return;
     MapView.armyTargetsCache = MapView.armyTargets();
     try { this.updateLabels(); } catch (e) { console.error('[Map] labels', e); }
-    const st = f => MapView.style(f.properties.id);
+    // Стиль считаем один раз на регион; если ни один цвет не изменился — глобус не трогаем (это дорого)
+    const memo = new Map();
+    for (const f of MapView.regionFeatures()) { const id = f.properties.id; memo.set(id, MapView.style(id)); }
+    const sig = [...memo.values()].map(x => x.capA + x.stroke + x.alt).join('|');
+    if (sig === this.polySig) return;
+    this.polySig = sig;
+    const st = f => memo.get(f.properties.id) || MapView.style(f.properties.id);
     this.g.polygonCapColor(f => st(f).capA)
       .polygonSideColor(f => st(f).side)
       .polygonStrokeColor(f => st(f).stroke)
@@ -870,8 +876,8 @@ const FlatRenderer = {
     return null;
   },
 
-  refresh() { this.dirty = true; },
-  refreshPolygons() { MapView.armyTargetsCache = MapView.armyTargets(); this.labelDirty = true; this.dirty = true; },
+  refresh() { this.dirty = true; this.baseDirty = true; },
+  refreshPolygons() { MapView.armyTargetsCache = MapView.armyTargets(); this.labelDirty = true; this.dirty = true; this.baseDirty = true; },
   refreshOverlays() { this.dirty = true; },
   hitArmy(e) {
     const r = this.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
@@ -906,8 +912,34 @@ const FlatRenderer = {
     this.draw(now);
   },
 
+  // Карта (фон, регионы, границы, подписи) рисуется в отдельный слой и только когда что-то изменилось:
+  // цвета регионов, выделение, сдвиг или масштаб. Каждый кадр поверх него — только армии, фронт и эффекты.
   draw(now) {
     const ctx = this.ctx, v = this.view, dpr = this.dpr;
+    const w = this.canvas.width, h = this.canvas.height;
+    const key = [w, h, v.scale, v.tx, v.ty].join('|');
+    if (!this.base) this.base = document.createElement('canvas');
+    if (this.baseDirty || this.baseKey !== key) {
+      if (this.base.width !== w || this.base.height !== h) { this.base.width = w; this.base.height = h; }
+      this.drawBase(this.base.getContext('2d'));
+      this.baseKey = key;
+      this.baseDirty = false;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(this.base, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.drawFrontLines(ctx, now);
+    this.drawArcs(ctx, now);
+    this.drawMarkers(ctx);
+    this.drawGarrisons(ctx);
+    this.drawArmies(ctx);
+    this.drawBattles(ctx, now);
+    this.drawEffects(ctx, now);
+  },
+
+  drawBase(ctx) {
+    const v = this.view, dpr = this.dpr;
     const w = this.canvas.width, h = this.canvas.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     const grad = ctx.createRadialGradient(w * 0.5, h * 0.45, 0, w * 0.5, h * 0.5, Math.max(w, h) * 0.7);
@@ -925,16 +957,13 @@ const FlatRenderer = {
     for (let lat = -90; lat <= 90; lat += 15) { const [, y] = this.proj(0, lat); ctx.moveTo(0, y); ctx.lineTo(this.W0, y); }
     ctx.stroke();
 
-    // Страны
+    // Регионы: стиль считаем один раз на регион
     ctx.lineJoin = 'round';
-    for (const s of this.shapes) {
-      const st = MapView.style(s.id);
-      ctx.fillStyle = st.cap;
-      ctx.fill(s.path);
-    }
+    const styles = this.shapes.map(s => MapView.style(s.id));
+    this.shapes.forEach((s, i) => { ctx.fillStyle = styles[i].cap; ctx.fill(s.path); });
     // Тонкие границы регионов, затем жирные — государств, затем выделенный регион
     ctx.lineWidth = 0.6 / v.scale;
-    for (const s of this.shapes) { ctx.strokeStyle = MapView.style(s.id).stroke; ctx.stroke(s.path); }
+    this.shapes.forEach((s, i) => { ctx.strokeStyle = styles[i].stroke; ctx.stroke(s.path); });
     ctx.lineWidth = 1.4 / v.scale;
     ctx.strokeStyle = 'rgba(6,9,14,0.75)';
     for (const p of this.countryShapes) ctx.stroke(p);
@@ -947,13 +976,6 @@ const FlatRenderer = {
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.drawLabels(ctx);
-    this.drawFrontLines(ctx, now);
-    this.drawArcs(ctx, now);
-    this.drawMarkers(ctx);
-    this.drawGarrisons(ctx);
-    this.drawArmies(ctx);
-    this.drawBattles(ctx, now);
-    this.drawEffects(ctx, now);
   },
 
   curve(a, b) {
