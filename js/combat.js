@@ -44,7 +44,8 @@ const Combat = {
     };
     add('Военная доктрина', 1 + m.attackBonus);
     add(`Организация ${Math.round(org)}%`, 0.4 + 0.6 * org / 100);
-    if (fromLoc) add('Форсирование пролива', Game.armySupply(fromLoc, target.id));
+    if (g.air) add('Воздушный десант: внезапность', g.airDays < 4 ? CFG.AIRBORNE.surprise : 1.05);
+    else if (fromLoc) add('Форсирование пролива', Game.armySupply(fromLoc, target.id));
     // ПТ-артиллерия противника (только у держав-игроков) гасит танковый удар
     const Y = Game.powerOf(target);
     if (Y && Y !== Game.cur && g.armor > 0) {
@@ -124,7 +125,7 @@ const Combat = {
   dayEffects(ratio, res, attDivs, defDivs, g) {
     const m = Game.mods;
     // Пехота держится дольше (организация шаблона выше), танки быстрее прорывают оборону
-    const orgK = g ? (50 / Math.max(15, g.orgStat)) * (1 - 0.35 * g.armor) : 1;
+    const orgK = g ? (50 / Math.max(15, g.orgStat)) * (1 - 0.35 * g.armor) * (g.air ? CFG.AIRBORNE.orgLoss : 1) : 1;
     return {
       ctrlDrop: ratio >= 1 ? (2 + 4 * Math.min(ratio - 1, 2)) / res : ratio >= 0.85 ? 0.3 / res : 0,
       attLoss: attDivs * U.clamp(0.012 / ratio, 0.002, 0.03) * (1 - m.loss),
@@ -134,7 +135,7 @@ const Combat = {
   },
 
   // Сводные цифры наступающих армий
-  armyGroup(armies, targetId) {
+  armyGroup(armies, targetId, air) {
     const divs = armies.reduce((s, a) => s + a.divs, 0);
     const org = divs ? armies.reduce((s, a) => s + a.org * a.divs, 0) / divs : 0;
     const mix = {};
@@ -143,7 +144,10 @@ const Combat = {
     // Если хоть одна армия идёт через пролив — штраф действует на всех
     const tgt = targetId || (armies[0].order && armies[0].order.target) || '';
     const from = armies.find(a => Geo.isSea(a.loc, tgt)) || armies[0];
-    return { divs, org, from: from.loc, att: st.att, armor: st.armor, orgStat: st.org };
+    // Десант: все армии группы высаживаются с воздуха
+    const isAir = air != null ? air : armies.every(a => a.order && a.order.air);
+    const airDays = isAir ? Math.max(...armies.map(a => (a.battle ? a.battle.days : 0))) : 0;
+    return { divs, org, from: from.loc, att: st.att, armor: st.armor, orgStat: st.org, air: isAir, airDays };
   },
 
   /* --- Один день сражения (бросаем кубики) --- */
@@ -167,8 +171,8 @@ const Combat = {
 
   /* --- Прогноз наступления: перебираем все 36×36 бросков ---
      Возвращает шанс «выиграть день», ожидаемые дни до захвата и на сколько дней хватит организации. */
-  estimateArmies(c, armies) {
-    const g = this.armyGroup(armies, c.id);
+  estimateArmies(c, armies, air) {
+    const g = this.armyGroup(armies, c.id, air);
     const att = this.attackBreakdown(c, g, g.from);
     const est = Game.estDivs(c);
     const def = this.defenseBreakdown(c, est.mid);

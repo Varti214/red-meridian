@@ -126,7 +126,10 @@ const MapView = {
   armyTargets() {
     const a = this.selectedArmy && Game.army(this.selectedArmy, Game.me);
     if (!a) return null;
-    return new Set((Geo.meta[a.loc] || { neighbors: [] }).neighbors.filter(n => Game.atWar(Game.c(n), Game.me)));
+    const set = new Set((Geo.meta[a.loc] || { neighbors: [] }).neighbors.filter(n => Game.atWar(Game.c(n), Game.me)));
+    // Десантная армия: все вражеские земли в радиусе высадки
+    if (Game.isAirborne(a)) Game.fronts(Game.me).forEach(c => { if (Game.airDistance(c, Game.me) <= CFG.AIRBORNE.range) set.add(c.id); });
+    return set;
   },
 
   /* ---- Единая логика стиля страны для обоих рендереров ---- */
@@ -157,34 +160,6 @@ const MapView = {
 
     const alt = 0.006 + (Game.isPower(c.ctrl) ? 0.004 : 0) + (front ? 0.006 : 0) + (hov ? 0.008 : 0) + (sel ? 0.016 : 0) + (target ? 0.006 : 0);
     return { cap, capA: U.rgba(cap, 0.93), side: U.rgba(side, 0.9), stroke: strokeColor, alt };
-  },
-
-  /* ---- Названия стран, как в HOI4 ----
-     Независимая страна — своё имя; столица державы — имя державы крупно;
-     присоединённые и оккупированные земли — своё имя мельче и бледнее.
-     base — «размер» подписи в градусах карты (растёт с площадью страны). */
-  labelCache: new Map(),
-  labels() {
-    if (!Game.S) return [];
-    const out = [];
-    Game.eachCountry(c => {
-      const m = Geo.meta[c.id];
-      if (!m || c.inert) return;
-      const tag = Game.isPower(c.ctrl) ? c.ctrl : null;
-      const main = c.ctrl === c.id || (tag && POWERS[tag].capital === c.id);
-      const text = tag && main ? POWERS[tag].name : c.name;
-      // У державы подпись крупнее: учитываем все её земли
-      // Площадь в «градусах» на высоких широтах завышена — поправка на косинус широты
-      const real = l => { const g = Geo.meta[l.id] || Geo.meta[l]; return g ? g.area * Math.cos(g.centroid.lat * Math.PI / 180) : 0; };
-      const area = tag && main ? Game.lands(tag).reduce((s, l) => s + real(l), 0) * 0.7 + real(c) * 0.3 : real(c);
-      const base = Math.min(7.5, Math.sqrt(Math.max(0.3, area)) * 0.3) * (main ? 1 : 0.7);
-      const bb = m.bbox, dy = Math.min(3, (bb[3] - bb[1]) * 0.12);
-      let d = this.labelCache.get(c.id);
-      if (!d) { d = { key: 'lbl-' + c.id, kind: 'label', id: c.id }; this.labelCache.set(c.id, d); }
-      d.text = text; d.base = base; d.sub = !main; d.lat = m.centroid.lat + dy; d.lng = m.centroid.lng;
-      out.push(d);
-    });
-    return out;
   },
 
   /* ---- Метки на карте ---- */
@@ -219,7 +194,7 @@ const MapView = {
       const sel = a.id === this.selectedArmy;
       out.push({
         sLat: from.lat, sLng: from.lng, eLat: to.lat, eLng: to.lng,
-        color: ['rgba(255,60,40,0.95)', 'rgba(255,215,90,1)'], stroke: sel ? 0.45 : 0.3, dash: 0.4, gap: 0.12, time: 1100, init: 0
+        color: a.order.air ? ['rgba(150,210,255,0.95)', 'rgba(255,255,255,1)'] : ['rgba(255,60,40,0.95)', 'rgba(255,215,90,1)'], stroke: sel ? 0.45 : 0.3, dash: 0.4, gap: 0.12, time: 1100, init: 0
       });
     }
     return out;
@@ -392,18 +367,6 @@ const GlobeRenderer = {
     controls.zoomSpeed = 0.8;
     controls.enableDamping = true;
     controls.dampingFactor = 0.12;
-    // При зуме подписи меняют размер (не чаще раза за кадр)
-    // Камера может лететь сама (переход к стране) — раз в 300 мс сверяем положение
-    this.lblTimer = setInterval(() => {
-      if (!this.g) return;
-      const p = this.g.pointOfView(), k = p.lat.toFixed(1) + p.lng.toFixed(1) + p.altitude.toFixed(2);
-      if (k !== this.lblKey) { this.lblKey = k; this.scaleLabels(); }
-    }, 300);
-    controls.addEventListener('change', () => {
-      if (this.lblRaf) return;
-      this.lblRaf = requestAnimationFrame(() => { this.lblRaf = 0; this.scaleLabels(); });
-    });
-
     g.renderer().setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     g.renderer().domElement.addEventListener('webglcontextlost', e => {
       e.preventDefault();
@@ -417,7 +380,7 @@ const GlobeRenderer = {
   },
 
   destroy() {
-    clearInterval(this.lblTimer);
+    this.clearLabels();
     try { this.g.pauseAnimation(); } catch (e) { /* уже остановлен */ }
     try { this.g._destructor(); } catch (e) { /* в старых версиях метода может не быть */ }
     this.g = null;
@@ -438,8 +401,8 @@ const GlobeRenderer = {
 
   refreshPolygons() {
     if (!this.g) return;
-    this.labelData = MapView.labels();
     MapView.armyTargetsCache = MapView.armyTargets();
+    try { this.updateLabels(); } catch (e) { console.error('[Map] labels', e); }
     const st = f => MapView.style(f.properties.id);
     this.g.polygonCapColor(f => st(f).capA)
       .polygonSideColor(f => st(f).side)
@@ -452,52 +415,74 @@ const GlobeRenderer = {
     this.g.arcsData(MapView.frontArcs().concat(this.tempArcs));
     this.g.pathsData(MapView.frontLines().concat(MapView.movePaths()));
     this.g.ringsData(this.tempRings.slice());
-    this.g.htmlElementsData(this.labelData.concat(MapView.markers(), MapView.armyMarkers()));
-    this.scaleLabels();
-  },
-  labelData: [],
-
-  // Размер подписи в пикселях: градусы × пикселей на градус при текущей высоте камеры
-  scaleLabels() {
-    if (!this.g) return;
-    const alt = this.g.pointOfView().altitude;
-    this.ppd = 0.0194 * this.el.clientHeight / (1 + alt);
-    this.pov = this.g.pointOfView();
-    for (const d of this.labelData) {
-      const el = this.markerEls.get(d.key);
-      if (el) this.sizeLabel(el, d);
-    }
-  },
-  sizeLabel(el, d) {
-    const px = Math.min(40, d.base * (this.ppd || 4));
-    const span = el.firstChild;
-    // Обратная сторона глобуса и край диска — подпись прячем
-    const v = this.pov || { lat: 0, lng: 0 }, r = Math.PI / 180;
-    const cosAng = Math.sin(d.lat * r) * Math.sin(v.lat * r) + Math.cos(d.lat * r) * Math.cos(v.lat * r) * Math.cos((d.lng - v.lng) * r);
-    if (px < 9 || cosAng < 0.3) { span.style.display = 'none'; return; }
-    span.style.display = '';
-    span.style.opacity = cosAng < 0.5 ? ((cosAng - 0.3) / 0.2).toFixed(2) : '';
-    span.style.fontSize = px.toFixed(1) + 'px';
-    span.style.letterSpacing = px > 22 ? '0.2em' : px > 14 ? '0.12em' : '0.05em';
+    this.g.htmlElementsData(MapView.markers().concat(MapView.armyMarkers()));
   },
 
-  labelEl(d) {
-    let el = this.markerEls.get(d.key);
-    if (!el) {
-      el = document.createElement('div');
-      el.className = 'gl-lbl';
-      el.appendChild(document.createElement('span'));
-      this.markerEls.set(d.key, el);
+  /* ---- Названия стран: лента с текстом на поверхности глобуса (изгибается вместе с ним) ---- */
+  labelGroup: null,
+  labelMeshes: new Map(),
+  LABEL_ALT: 0.05,              // выше самых «поднятых» стран, чтобы буквы не тонули
+  updateLabels() {
+    const T = window.THREE;
+    if (!this.g || !T || typeof this.g.getCoords !== 'function') return;
+    if (!this.labelGroup) {
+      this.labelGroup = new T.Group();
+      this.labelGroup.name = 'country-labels';
+      this.g.scene().add(this.labelGroup);
     }
-    el.classList.toggle('sub', d.sub);
-    if (el.firstChild.textContent !== d.text) el.firstChild.textContent = d.text;
-    this.sizeLabel(el, d);
-    return el;
+    const keep = new Set();
+    for (const L of Labels.all()) {
+      const id = L.key + '|' + L.text;
+      keep.add(id);
+      if (this.labelMeshes.has(id)) continue;
+      const m = this.labelMesh(L);
+      if (m) { this.labelGroup.add(m); this.labelMeshes.set(id, m); }
+    }
+    for (const [id, m] of this.labelMeshes) {
+      if (keep.has(id)) continue;
+      this.labelGroup.remove(m);
+      this.disposeMesh(m);
+      this.labelMeshes.delete(id);
+    }
+  },
+  disposeMesh(m) { m.geometry.dispose(); if (m.material.map) m.material.map.dispose(); m.material.dispose(); },
+  clearLabels() {
+    for (const m of this.labelMeshes.values()) this.disposeMesh(m);
+    this.labelMeshes.clear();
+    this.labelGroup = null;
+  },
+  labelMesh(L) {
+    const T = window.THREE, g = this.g;
+    const { top, bot } = Labels.ribbon(L);
+    const n = top.length;
+    let len = 0;
+    for (let i = 1; i < n; i++) {
+      const a = L.pts[i - 1], b = L.pts[i], kc = Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+      len += Math.hypot((b.lng - a.lng) * kc, b.lat - a.lat);
+    }
+    const tex = new T.CanvasTexture(Labels.canvasFor(L, len / L.h));
+    tex.anisotropy = Math.min(8, g.renderer().capabilities.getMaxAnisotropy());
+    const pos = new Float32Array(n * 6), uv = new Float32Array(n * 4), idx = [];
+    for (let i = 0; i < n; i++) {
+      const a = g.getCoords(top[i].lat, top[i].lng, this.LABEL_ALT), b = g.getCoords(bot[i].lat, bot[i].lng, this.LABEL_ALT);
+      pos.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6);
+      const u = i / (n - 1);
+      uv.set([u, 1, u, 0], i * 4);
+      if (i < n - 1) { const o = i * 2; idx.push(o, o + 1, o + 2, o + 1, o + 3, o + 2); }
+    }
+    const geo = new T.BufferGeometry();
+    geo.setAttribute('position', new T.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new T.BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    const mat = new T.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: T.DoubleSide });
+    const mesh = new T.Mesh(geo, mat);
+    mesh.renderOrder = 5;
+    mesh.raycast = () => {};        // подписи не мешают кликам по странам
+    return mesh;
   },
 
   markerEl(d) {
     if (d.kind === 'army') return this.armyEl(d);
-    if (d.kind === 'label') return this.labelEl(d);
     let el = this.markerEls.get(d.key);
     if (!el) {
       el = document.createElement('div');
@@ -935,26 +920,38 @@ const FlatRenderer = {
   },
 
   drawLabels(ctx) {
-    if (!this.labelData || this.labelDirty !== false) { this.labelData = MapView.labels(); this.labelDirty = false; }
-    const ppd = this.view.scale * this.W0 / 360;
+    if (!this.labelData || this.labelDirty !== false) { this.labelData = Labels.all(); this.labelDirty = false; }
+    const pxDeg = this.view.scale * this.H0 / 180;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
-    for (const d of this.labelData) {
-      const px = Math.min(40, d.base * ppd);
-      if (px < 9) continue;
-      const [x, y] = this.toScreen(d.lng, d.lat);
-      const sp = px > 22 ? 0.2 : px > 14 ? 0.12 : 0.05;
-      ctx.font = `${d.sub ? 500 : 700} ${px.toFixed(1)}px "Bahnschrift", "Segoe UI", sans-serif`;
-      if ('letterSpacing' in ctx) ctx.letterSpacing = (px * sp).toFixed(1) + 'px';
-      const t = d.text.toUpperCase();
-      ctx.lineWidth = Math.max(2, px / 5);
-      ctx.strokeStyle = 'rgba(4,8,14,0.75)';
-      ctx.strokeText(t, x, y);
-      ctx.fillStyle = d.sub ? 'rgba(225,232,240,0.55)' : 'rgba(245,248,252,0.9)';
-      ctx.fillText(t, x, y);
+    for (const L of this.labelData) {
+      const px = L.h * pxDeg * 0.82;
+      if (px < 7) continue;
+      const P = L.pts.map(p => this.toScreen(p.lng, p.lat));
+      const cum = [0];
+      for (let i = 1; i < P.length; i++) cum.push(cum[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+      const total = cum[cum.length - 1];
+      if (!total) continue;
+      const chars = [...L.text];
+      ctx.font = `700 ${px.toFixed(1)}px Georgia, "Times New Roman", serif`;
+      let j = 0;
+      chars.forEach((ch, i) => {
+        const d = (i + 0.5) / chars.length * total;
+        while (j < cum.length - 2 && cum[j + 1] < d) j++;
+        const t = (d - cum[j]) / Math.max(1e-6, cum[j + 1] - cum[j]);
+        const x = P[j][0] + (P[j + 1][0] - P[j][0]) * t, y = P[j][1] + (P[j + 1][1] - P[j][1]) * t;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.atan2(P[j + 1][1] - P[j][1], P[j + 1][0] - P[j][0]));
+        ctx.lineWidth = px * 0.08;
+        ctx.strokeStyle = LABEL_STYLE.stroke;
+        ctx.strokeText(ch, 0, 0);
+        ctx.fillStyle = L.sub ? LABEL_STYLE.subFill : LABEL_STYLE.fill;
+        ctx.fillText(ch, 0, 0);
+        ctx.restore();
+      });
     }
-    if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
   },
 
   drawMarkers(ctx) {

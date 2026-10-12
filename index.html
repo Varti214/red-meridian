@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Красный меридиан — 2018</title>
 <meta name="description" content="Браузерная гранд-стратегия в духе Hearts of Iron IV: современный мир с 2018 года: Россия, США и Китай, выборы, перевороты и мировые новости.">
-<link rel="stylesheet" href="css/style.css?v=24">
+<link rel="stylesheet" href="css/style.css?v=26">
 </head>
 <body>
 
@@ -66,6 +66,7 @@
       <div class="res" id="res-rp"><svg class="ico c-cyan"><use href="#i-rp"/></svg><div class="res-body"><span class="res-val">0</span><span class="res-delta">+0</span></div><span class="res-lbl">ОИ</span></div>
       <div class="res hidden" id="res-nuke"><svg class="ico c-yellow"><use href="#i-nuke"/></svg><div class="res-body"><span class="res-val">0</span><span class="res-delta"></span></div><span class="res-lbl">Боеголовки</span></div>
       <div class="res res-ruua hidden" id="res-ruua"><svg class="ico c-red"><use href="#i-swords"/></svg><div class="res-body"><span class="res-val">0%</span><span class="res-delta">РФ — Украина</span></div><span class="res-lbl">Россия — Украина</span></div>
+      <div class="res res-ruua hidden" id="res-uaw"><svg class="ico c-cyan"><use href="#i-flag"/></svg><div class="res-body"><span class="res-val">0%</span><span class="res-delta">доверие Запада</span></div><span class="res-lbl">Украина — Запад</span></div>
       <div class="res res-tension" id="res-tension">
         <svg class="ico"><use href="#i-tension"/></svg>
         <div class="tension-wrap">
@@ -160,25 +161,26 @@
 </div>
 
 <!-- 3D-движок: Three.js + globe.gl одним локальным файлом (без интернета) -->
-<script src="vendor/globe-bundle.min.js?v=24" onerror="window.__vendorFailed=true"></script>
+<script src="vendor/globe-bundle.min.js?v=26" onerror="window.__vendorFailed=true"></script>
 <!-- Границы стран: Natural Earth 1:110m -->
-<script src="data/countries.js?v=24" onerror="window.__geoFailed=true"></script>
-<script src="js/util.js?v=24"></script>
-<script src="js/data.js?v=24"></script>
-<script src="js/focuses.js?v=24"></script>
-<script src="js/geo.js?v=24"></script>
-<script src="js/combat.js?v=24"></script>
-<script src="js/ai.js?v=24"></script>
-<script src="js/game.js?v=24"></script>
-<script src="js/parties.js?v=24"></script>
-<script src="js/politics.js?v=24"></script>
-<script src="js/events.js?v=24"></script>
-<script src="js/ruua.js?v=24"></script>
-<script src="js/autopilot.js?v=24"></script>
-<script src="js/net.js?v=24"></script>
-<script src="js/audio.js?v=24"></script>
-<script src="js/map.js?v=24"></script>
-<script src="js/ui.js?v=24"></script>
-<script src="js/main.js?v=24"></script>
+<script src="data/countries.js?v=26" onerror="window.__geoFailed=true"></script>
+<script src="js/util.js?v=26"></script>
+<script src="js/data.js?v=26"></script>
+<script src="js/focuses.js?v=26"></script>
+<script src="js/geo.js?v=26"></script>
+<script src="js/combat.js?v=26"></script>
+<script src="js/ai.js?v=26"></script>
+<script src="js/game.js?v=26"></script>
+<script src="js/parties.js?v=26"></script>
+<script src="js/politics.js?v=26"></script>
+<script src="js/events.js?v=26"></script>
+<script src="js/ruua.js?v=26"></script>
+<script src="js/autopilot.js?v=26"></script>
+<script src="js/net.js?v=26"></script>
+<script src="js/audio.js?v=26"></script>
+<script src="js/labels.js?v=26"></script>
+<script src="js/map.js?v=26"></script>
+<script src="js/ui.js?v=26"></script>
+<script src="js/main.js?v=26"></script>
 </body>
 </html>

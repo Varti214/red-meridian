@@ -1629,3 +1629,5 @@ body.assist-on .tb-clock { position: relative; }
 .res-ruua.hot .res-val { color: var(--orange); }
 .res-ruua.crit .res-val { color: var(--red-2); animation: gmPulse 1.4s ease-in-out infinite; }
 .c-ua { color: #7cc8ff; font-weight: 600; }
+
+.bat-para { background: rgba(120, 190, 255, 0.18); color: #a8d6ff; }

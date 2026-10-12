@@ -137,7 +137,7 @@ function wireCountry(c) {
 function topState(S) {
   return {
     day: S.day, date: S.date, tension: S.tension, speed: S.speed, paused: S.paused,
-    pwars: S.pwars, over: S.over, victoryShown: S.victoryShown, powers: S.powers, difficulty: S.difficulty, ruua: S.ruua
+    pwars: S.pwars, over: S.over, victoryShown: S.victoryShown, powers: S.powers, difficulty: S.difficulty, ruua: S.ruua, uaw: S.uaw
   };
 }
 
@@ -247,7 +247,7 @@ function runLoop(room) {
 
 /* ---------------- Действия игроков ---------------- */
 const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'saveTemplate', 'deleteTemplate', 'peace', 'influence', 'integrate', 'spy',
-  'nuke', 'startResearch', 'startFocus', 'chooseEvent', 'setPaused', 'setSpeed', 'supportParty', 'meddle', 'coup', 'setAssist']);
+  'nuke', 'startResearch', 'startFocus', 'chooseEvent', 'setPaused', 'setSpeed', 'supportParty', 'meddle', 'coup', 'setAssist', 'orderAirborne']);
 
 function doAction(room, p, name, args) {
   if (!room.api) return { ok: false, msg: 'Игра ещё не началась' };

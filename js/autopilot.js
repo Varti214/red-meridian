@@ -38,6 +38,7 @@ const Bot = {
     // Автопилот не ищет войны с другой державой-игроком: напряжённость Россия — Украина и войну с ней избегает
     each(/Россия — Украина ([+−-])(\d+)/g, m => { s -= this.sign(m[1]) * this.num(m[2]) * 0.8; });
     if (/^Война с /i.test(tip)) s -= 60;
+    each(/доверие Запада ([+−-])(\d+)/g, m => { if (Game.cur === 'UA') s += this.sign(m[1]) * this.num(m[2]) * 0.6; });
     if (/Талибы приходят|убрать «Старение/i.test(tip)) s += 4;
     return s;
   },
@@ -139,6 +140,22 @@ const Bot = {
     const war = Game.fronts().length > 0;
     const lands = Game.lands().filter(c => !c.radioactive);
     const frontier = lands.filter(c => this.threat(c) > 0);
+
+    // 0) Десант: свободная армия ВДВ высаживается там, где расчёт обещает быстрый успех
+    if (war) {
+      for (const a of P.armies) {
+        if (!Game.isAirborne(a) || a.order.type !== 'hold' || a.org < CFG.AIRBORNE.minOrg || (a.airCd || 0) > Game.S.day) continue;
+        let best = null;
+        for (const c of Game.fronts()) {
+          if (Game.canAirdrop(a, c)) continue;
+          const est = Combat.estimateArmies(c, [a], true);
+          if (est.pWin < 0.65 || est.daysToTake > est.orgDays) continue;
+          const v = (c.factories + 1 + (c.id === (POWERS[Game.powerOf(c)] || {}).capital ? 6 : 0)) / Math.max(1, est.daysToTake);
+          if (!best || v > best.v) best = { c, v };
+        }
+        if (best) Game.orderAirborne(a.id, best.c.id);
+      }
+    }
 
     // 1) Наступления: группа армий на одной земле бьёт по самой выгодной соседней цели
     if (war) {

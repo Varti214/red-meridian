@@ -48,7 +48,7 @@ const Game = {
   /* ---------------- СОЗДАНИЕ ИГРЫ ---------------- */
   newGame(difficulty = 'normal', tags = ['SOV'], names = {}) {
     const S = {
-      v: 3, day: 0, date: CFG.START_DATE, difficulty, nextNewsDay: 3, ruua: 45,
+      v: 3, day: 0, date: CFG.START_DATE, difficulty, nextNewsDay: 3, ruua: 45, uaw: 55,
       speed: 1, paused: true,
       tension: CFG.START.tension,
       countries: {}, powers: {}, pwars: {},
@@ -128,7 +128,7 @@ const Game = {
       if (n < 1) break;
       this.takeReserve(n, tag);
       const tanks = Math.min(a.tanks || 0, n);
-      const mix = tanks ? { T1: n - tanks, T2: tanks } : { T1: n };
+      const mix = a.tpl ? { [a.tpl]: n } : tanks ? { T1: n - tanks, T2: tanks } : { T1: n };
       this.newArmy(tag, a.name, n, this.S.countries[a.loc] && this.S.countries[a.loc].ctrl === tag ? a.loc : d.capital, mix);
     }
     this.S.nextRandomEvent[tag] = 45;
@@ -699,6 +699,7 @@ const Game = {
     if (why) return this.fail(why);
     const X = this.cur, Y = this.powerOf(c);
     delete c.cb[X];
+    if (this.ruuaPair && this.ruuaPair(this.c(this.def().capital), c)) this.S.flags.ruuaBy = this.govHolder(this.c(this.def().capital)).id;
     this.addTension(this.declareTension(c));
     if (Y) {
       this.S.pwars[this.pairKey(X, Y)] = { since: this.S.day };
@@ -731,6 +732,7 @@ const Game = {
     c.warDays = 0;
     c.divs *= 1.1;
     this.addTension(3);
+    if (this.ruuaPair && this.ruuaPair(c, this.c(POWERS[X].capital))) this.S.flags.ruuaBy = c.id;
     this.log('alert', 'Объявление войны', `${c.name} объявляет нам войну. ${reason}.`, id, X);
     Bus.emit('war', { by: id, target: POWERS[X].capital });
     this.popup({
@@ -772,7 +774,9 @@ const Game = {
       s.bats += n;
       if (b.armor) s.armor += n;
       if (b.antiArmor) s.at += n;
+      if (b.airborne) s.air = (s.air || 0) + n;
     }
+    s.air = s.bats ? (s.air || 0) / s.bats : 0;
     if (!s.bats) s.speed = 1;
     s.org = s.bats ? s.org / s.bats : 50;
     s.armor = s.bats ? s.armor / s.bats : 0;
@@ -784,7 +788,7 @@ const Game = {
 
   // Суммарные характеристики смеси дивизий
   mixStats(mix, tag = this.cur) {
-    const r = { divs: 0, att: 0, def: 0, org: 0, speed: 9, armor: 0, at: 0 };
+    const r = { divs: 0, att: 0, def: 0, org: 0, speed: 9, armor: 0, at: 0, air: 0 };
     for (const [id, n] of Object.entries(mix || {})) {
       if (n <= 0) continue;
       const t = this.tpl(id, tag);
@@ -795,9 +799,10 @@ const Game = {
       r.org += s.org * n;
       r.armor += s.armor * n;
       r.at += s.at * n;
+      r.air += (s.air || 0) * n;
       r.speed = Math.min(r.speed, s.speed);
     }
-    if (r.divs > 0) { r.org /= r.divs; r.armor /= r.divs; r.at /= r.divs; } else { r.org = 50; r.speed = 1; }
+    if (r.divs > 0) { r.org /= r.divs; r.armor /= r.divs; r.at /= r.divs; r.air /= r.divs; } else { r.org = 50; r.speed = 1; }
     return r;
   },
 
@@ -1098,6 +1103,75 @@ const Game = {
     return { ok: true, msg: `${a.name}: наступление — ${c.name}` };
   },
 
+  /* --- Воздушный десант (ВДВ) ---
+     Армия, где больше 60% батальонов — десантные, может высадиться на вражескую землю
+     в радиусе 2200 км, даже без общей границы. Первые дни — внезапность, но организация
+     тает быстрее. Не взяв цель, десант оказывается отрезан и теряет 40% дивизий. */
+  distanceKm(a, b) {
+    const p = Geo.meta[a] && Geo.meta[a].centroid, q = Geo.meta[b] && Geo.meta[b].centroid;
+    if (!p || !q) return Infinity;
+    const r = Math.PI / 180;
+    const h = Math.sin((q.lat - p.lat) * r / 2) ** 2 + Math.cos(p.lat * r) * Math.cos(q.lat * r) * Math.sin((q.lng - p.lng) * r / 2) ** 2;
+    return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)));
+  },
+  // Точки границы страны (каждая 3-я вершина) — для расстояний «от края», а не от центра
+  edgePts(id) {
+    if (!this._edge) {
+      this._edge = {};
+      for (const f of Geo.features) {
+        const g = f.geometry; if (!g) continue;
+        const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+        const pts = [];
+        for (const p of polys) p[0].forEach((v, i) => { if (i % 3 === 0) pts.push(v); });
+        this._edge[f.properties.id] = pts;
+      }
+    }
+    return this._edge[id] || [];
+  },
+  // Расстояние от ближайшей точки нашей земли до центра цели (аэродромы есть везде, где мы)
+  airDistance(c, tag = this.cur) {
+    const q = Geo.meta[c.id] && Geo.meta[c.id].centroid;
+    if (!q) return Infinity;
+    const r = Math.PI / 180, cq = Math.cos(q.lat * r);
+    let best = Infinity;
+    for (const l of this.lands(tag)) {
+      for (const [lng, lat] of this.edgePts(l.id)) {
+        const h = Math.sin((lat - q.lat) * r / 2) ** 2 + cq * Math.cos(lat * r) * Math.sin((lng - q.lng) * r / 2) ** 2;
+        const d = 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)));
+        if (d < best) best = d;
+      }
+    }
+    return best;
+  },
+  isAirborne(a) { return !!a && this.mixStats(a.mix).air >= CFG.AIRBORNE.share; },
+  canAirdrop(a, c) {
+    if (!a) return 'Армия не найдена';
+    if (this.outReason()) return this.outReason();
+    if (!this.isAirborne(a)) return 'Нужна армия из воздушно-десантных дивизий';
+    if (!c || c.ctrl === this.cur) return 'Это наша территория';
+    if (!this.atWar(c)) return 'Нет состояния войны';
+    if (a.order.type !== 'hold' || a.battle) return 'Армия занята';
+    if ((a.airCd || 0) > this.S.day) return `Десант готовится: ${U.days(a.airCd - this.S.day)}`;
+    if (a.org < CFG.AIRBORNE.minOrg) return `Нужна организация ${CFG.AIRBORNE.minOrg}% (сейчас ${Math.round(a.org)}%)`;
+    const d = this.airDistance(c);
+    if (d > CFG.AIRBORNE.range) return `Слишком далеко: ${Math.round(d)} км (дальность ${CFG.AIRBORNE.range} км)`;
+    if (this.P().pp < CFG.AIRBORNE.pp) return `Нужно ${CFG.AIRBORNE.pp} ПВ`;
+    return null;
+  },
+  orderAirborne(id, targetId) {
+    const a = this.army(id), c = this.c(targetId), why = this.canAirdrop(a, c);
+    if (why) return this.fail(why);
+    this.P().pp -= CFG.AIRBORNE.pp;
+    a.airCd = this.S.day + CFG.AIRBORNE.cooldown;
+    a.order = { type: 'attack', target: c.id, air: true };
+    a.battle = { target: c.id, start: this.S.day, days: 0, attLost: 0, defLost: 0, ctrlStart: c.control, ratioSum: 0, last: null, orgStart: a.org, air: true };
+    const Y = this.powerOf(c);
+    if (Y) this.log('alert', 'Вражеский десант', `${POWERS[this.cur].name} высаживает воздушный десант. Направление: ${c.name}.`, c.id, Y);
+    this.log('mil', 'Воздушный десант', `${a.name} высаживается в тылу врага. Цель: ${c.name}.`, c.id);
+    Bus.emit('stateChanged');
+    return { ok: true, msg: `${a.name}: десант — ${c.name}` };
+  },
+
   /* --- Ежедневная жизнь армий державы (марш, отдых) --- */
   tickArmies() {
     const P = this.P(), m = this.mods;
@@ -1133,7 +1207,7 @@ const Game = {
         for (const a of this.armies()) {
           if (a.order.type !== 'attack') continue;
           const c = this.c(a.order.target);
-          const adj = (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(a.order.target);
+          const adj = a.order.air || (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(a.order.target);
           if (!c || c.ctrl === X || !this.atWar(c) || !adj) { this.finishBattle(a, 'invalid'); continue; }
           (groups[c.id] = groups[c.id] || []).push(a);
         }
@@ -1187,6 +1261,13 @@ const Game = {
     const P = this.P(), X = this.cur;
     const avg = b.ratioSum / b.days;
     const last = b.last;
+    if (b.air && (result === 'halted' || result === 'stopped')) {
+      const lost = a.divs * CFG.AIRBORNE.cutOff;
+      this.scaleMix(a, a.divs - lost);
+      b.attLost += lost;
+      P.stats.divLost += lost;
+      this.log('alert', 'Десант отрезан', `${a.name}: десант не взял цель и прорывался к своим. Потеряно ${U.fmt(lost, 1)} див.`, c.id);
+    }
     if (result === 'captured') P.stats.won++; else if (result === 'halted') P.stats.lost++;
     const title = { captured: 'Территория взята', halted: 'Наступление выдохлось', stopped: 'Наступление остановлено', invalid: 'Наступление прекращено' }[result];
     this.log(result === 'captured' ? 'success' : 'mil', `${a.name}: ${title.toLowerCase()}`,
@@ -1641,6 +1722,7 @@ const Game = {
     }
     if (fx.pop) for (const [ide, n] of Object.entries(fx.pop)) this.addPop(ide, n);
     if (fx.ruua) this.addRUUA(fx.ruua);
+    if (fx.uaw) this.addUAW(fx.uaw);
     if (fx.endSpirit) this.removeSpirit(X, fx.endSpirit);
     if (fx.claims) {
       const ids = fx.claims === 'neighbors'

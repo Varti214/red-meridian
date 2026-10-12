@@ -64,7 +64,7 @@ const UI = {
     const tipk = (id, key) => { const n = document.getElementById(id); if (n) n.dataset.tipk = key; };
     tipk('res-pp', 'pp'); tipk('res-fac', 'fac'); tipk('res-mp', 'mp'); tipk('res-div', 'div');
     tipk('res-rp', 'rp'); tipk('res-nuke', 'nuke'); tipk('res-tension', 'tension'); tipk('tb-nation', 'leader');
-    tipk('net-status', 'net'); tipk('res-ruua', 'ruua');
+    tipk('net-status', 'net'); tipk('res-ruua', 'ruua'); tipk('res-uaw', 'uaw');
 
     // Игра шлёт события и посреди хода ИИ (когда активной державы нет) — поэтому
     // каждый обработчик интерфейса выполняется «от лица» своей державы
@@ -200,6 +200,7 @@ const UI = {
       case 'attack-plan': this.select(id, true); return;
       case 'army-select': Sound.play('click'); this.selectArmy(a.dataset.army); return;
       case 'army-attack': return run('orderAttack', a.dataset.army, id);
+      case 'army-air': return run('orderAirborne', a.dataset.army, id);
       case 'army-hold': return run('orderHold', a.dataset.army);
       case 'army-reinforce': return run('reinforceArmy', a.dataset.army, +a.dataset.n);
       case 'army-disband': return run('disbandArmy', a.dataset.army).then(() => this.selectArmy(null));
@@ -321,6 +322,13 @@ const UI = {
     if (c.ctrl === Game.me) {
       Act.call('orderMove', a.id, c.id).then(res => this.result(res));
     } else {
+      const adj = (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id);
+      if (!adj && Game.isAirborne(a) && Game.atWar(c)) {
+        const whyAir = Game.canAirdrop(a, c);
+        if (whyAir) { this.toast(whyAir, 'err'); Sound.play('error'); return; }
+        Act.call('orderAirborne', a.id, c.id).then(res => this.result(res));
+        return;
+      }
       const why = Game.canOrderAttack(a, c);
       if (why) { this.toast(why === 'Нет состояния войны' ? 'С этой страной нет войны — сначала обоснуйте и объявите её' : why, 'err'); Sound.play('error'); return; }
       Act.call('orderAttack', a.id, c.id).then(res => this.result(res));
@@ -403,6 +411,12 @@ const UI = {
       rr.querySelector('.res-delta').textContent = Game.ruuaWar() ? 'война' : (S.ruua >= 90 ? 'на грани' : S.ruua >= 75 ? 'опасно' : 'напряжённость');
       rr.classList.toggle('hot', S.ruua >= 75 && S.ruua < 90);
       rr.classList.toggle('crit', S.ruua >= 90);
+    }
+    const uw = $('#res-uaw'), showUW = !!sides && Game.me === 'UA';
+    uw.classList.toggle('hidden', !showUW);
+    if (showUW) {
+      uw.querySelector('.res-val').textContent = Math.round(S.uaw || 0) + '%';
+      uw.querySelector('.res-delta').textContent = S.uaw >= 70 ? 'союзник' : S.uaw >= 45 ? 'партнёр' : S.uaw >= 25 ? 'сомневается' : 'не доверяет';
     }
     const t = S.tension;
     const tEl = $('#res-tension');
@@ -487,7 +501,7 @@ const UI = {
       ...SPY_OPS.map(op => Game.canSpy(c, op))];
     return JSON.stringify([c.id, c.faction, c.ctrl, Game.atWar(c), c.cb[me] === true, !!Game.justifying(c), !!c.influence, !!c.integrate, c.radioactive,
       c.factories, c.fort, Math.round(c.control), Math.round(Game.intel(c) / 5), c.sab, c.sabDays > 0, est.lo, est.hi, Math.round(c.pop / 1e5),
-      reasons, P.divs, P.warheads, Game.S.tension >= 50, Math.round(Game.S.ruua || 0), Math.round(Game.S.tension / 4), Game.mods.nukes, P.techs.length, this.polSig(c)]);
+      reasons, P.divs, P.warheads, Game.S.tension >= 50, Math.round(Game.S.ruua || 0), Math.round(Game.S.uaw || 0), Math.round(Game.S.tension / 4), Game.mods.nukes, P.techs.length, this.polSig(c)]);
   },
 
   badge(text, cls) { return `<span class="bdg bdg-${cls}">${U.esc(text)}</span>`; },
@@ -619,7 +633,9 @@ const UI = {
 
     if (Game.ruuaSides && Game.ruuaSides() && ['RUS', 'UKR'].includes(c.id)) {
       const v = Math.round(S.ruua || 0);
-      html += `<div class="cp-stats">${this.stat('Россия — Украина', Game.ruuaWar() ? 'война' : v + '%', this.meter(v, v >= 75 ? 'meter-red' : 'meter-orange'), 'Напряжённость между Россией и Украиной. На 100% начинается война.')}</div>`;
+      const w = Math.round(S.uaw || 0);
+      html += `<div class="cp-stats">${this.stat('Россия — Украина', Game.ruuaWar() ? 'война' : v + '%', this.meter(v, v >= 75 ? 'meter-red' : 'meter-orange'), 'Напряжённость между Россией и Украиной. На 100% начинается война.')}
+        ${c.id === 'UKR' ? this.stat('Украина — Запад', w + '%', this.meter(w, 'meter-violet'), 'Доверие Запада к Киеву. От него зависят санкции против России и поставки оружия, если начнётся война.') : ''}</div>`;
     }
     html += this.politicsHTML(c);
     html += this.projectBlock(c, 'justify', 'Обоснование войны');
@@ -952,6 +968,12 @@ const UI = {
         <span>Выборы</span><b>${left == null ? 'не проводятся' : 'через ' + U.days(left)}</b>${spirits}</div>
         <div class="tt-hint">Кликните по своей столице, чтобы открыть внутреннюю политику</div>`;
     },
+    uaw() {
+      const S = Game.S, w = Math.round(S.uaw || 0);
+      return `<div class="tt-title">Украина — Запад: ${w}%</div>
+        <div class="tt-text">Насколько Запад доверяет Киеву. Шкала тянется к уровню, который задают правительство Украины (либералы и консерваторы ближе к Западу, «Оппозиционная платформа» — дальше), коррупция и членство в НАТО. Фокусы и решения сдвигают её.</div>
+        <div class="tt-grid"><span>Если Россия нападёт</span><b>санкции и пакеты помощи раз в 30 дней</b><span>Сила помощи</span><b>${w < 25 ? 'поставок не будет' : U.pct(Game.westAidLevel(true) * (0.5 + w / 100))}</b><span>≥70% в мирное время</span><b>подготовка по стандартам НАТО</b></div>`;
+    },
     ruua() {
       const S = Game.S;
       return `<div class="tt-title">Россия — Украина: ${Math.round(S.ruua || 0)}%</div>
@@ -1228,7 +1250,7 @@ const UI = {
   },
 
   orderText(a) {
-    if (a.order.type === 'attack') return 'Наступление: ' + Game.c(a.order.target).name;
+    if (a.order.type === 'attack') return (a.order.air ? 'Десант: ' : 'Наступление: ') + Game.c(a.order.target).name;
     if (a.order.type === 'move') {
       const to = Game.c(a.order.to || a.order.path[a.order.path.length - 1]);
       return `Марш: ${to.name} (${U.days(a.order.left + a.order.path.slice(1).length * CFG.ARMY.stepDays)})`;
@@ -1287,6 +1309,19 @@ const UI = {
     } else {
       html += `<div class="cp-note">Рядом нет врага. Отведите армию к линии фронта: кликните по своей приграничной земле.</div>`;
     }
+    if (Game.isAirborne(a)) {
+      const air = Game.fronts().filter(c => !(Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id))
+        .map(c => ({ c, d: Game.airDistance(c) })).filter(x => x.d <= CFG.AIRBORNE.range).sort((x, y) => x.d - y.d).slice(0, 8);
+      html += `<div class="cp-sec"><div class="cp-sec-title">Воздушный десант</div>
+        <div class="cp-note">Высадка на любую вражескую землю в радиусе ${CFG.AIRBORNE.range} км — даже без общей границы. Первые дни удар сильнее (внезапность), но организация тает быстрее, а не взяв цель, десант потеряет ${Math.round(CFG.AIRBORNE.cutOff * 100)}% дивизий.</div>`;
+      if (!air.length) html += '<div class="cp-note warn">Нет вражеских земель в радиусе десанта.</div>';
+      for (const { c, d } of air) {
+        const e = Combat.estimateArmies(c, [a], true);
+        html += this.actBtn({ act: 'army-air', id: c.id, data: `data-army="${a.id}"`, label: 'Десант: ' + c.name, icon: 'i-flag', cls: 'act-primary',
+          why: Game.canAirdrop(a, c), sub: `${Math.round(d)} км · ${this.forecastHTML(e)}`, cost: this.costTag(CFG.AIRBORNE.pp) });
+      }
+      html += '</div>';
+    }
     const n5 = Math.min(5, P.divs, Math.floor(CFG.ARMY.max - a.divs));
     html += `<div class="cp-sec"><div class="cp-sec-title">Управление</div>
       ${this.actBtn({ act: 'army-reinforce', data: `data-army="${a.id}" data-n="5"`, label: 'Пополнить из резерва', icon: 'i-plus',
@@ -1301,8 +1336,14 @@ const UI = {
   attackOptionsHTML(c) {
     if (!Game.atWar(c)) return '<div class="cp-note">Нет состояния войны. Обоснуйте и объявите войну, затем подведите армию к границе.</div>';
     const near = Game.armies().filter(a => (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id));
-    if (!near.length) return '<div class="cp-note warn">Рядом нет наших армий. Выберите армию (внизу или фишкой на карте) и кликните по своей земле у этой границы.</div>';
+    const paras = Game.armies().filter(a => Game.isAirborne(a) && !near.includes(a) && Game.airDistance(c) <= CFG.AIRBORNE.range);
     let html = '';
+    for (const a of paras) {
+      const e = Combat.estimateArmies(c, [a], true);
+      html += this.actBtn({ act: 'army-air', id: c.id, data: `data-army="${a.id}"`, label: `Десант: ${a.name} (${U.fmt(a.divs, 0)} див.)`, icon: 'i-flag', cls: 'act-primary',
+        why: Game.canAirdrop(a, c), sub: this.forecastHTML(e), cost: this.costTag(CFG.AIRBORNE.pp) });
+    }
+    if (!near.length) return html + '<div class="cp-note warn">Рядом нет наших армий. Выберите армию (внизу или фишкой на карте) и кликните по своей земле у этой границы.</div>';
     for (const a of near) {
       if (a.order.type === 'attack' && a.order.target === c.id) {
         html += this.actBtn({ act: 'army-select', data: `data-army="${a.id}"`, label: a.name + ': уже наступает', icon: 'i-swords', sub: `День ${a.battle ? a.battle.days : 0} · организация ${Math.round(a.org)}%` });
