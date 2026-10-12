@@ -157,7 +157,7 @@ Object.assign(Game, {
   embargoed(seller, buyer) {
     // Эмбарго держав: сама держава и страны её блока не торгуют с целью
     const sellerPower = this.isPower(seller) ? seller : POWER_TAGS.find(t => this.isPower(t) && this.isAlly(this.c(seller), t));
-    if (sellerPower && (this.P(sellerPower).embargo || {})[buyer]) return true;
+    if (sellerPower && [sellerPower, ...(this.alliesOfPower ? this.alliesOfPower(sellerPower) : [])].some(t => (this.P(t).embargo || {})[buyer])) return true;
     if (this.isPower(seller) && (this.P(buyer).embargo || {})[seller]) return true;
     return false;
   },
@@ -195,6 +195,7 @@ Object.assign(Game, {
   },
   tradePrice(sellerId, tag = this.cur, k) {
     if (!this.isPower(sellerId) && this.isAlly(this.c(sellerId), tag)) return TRADE.allyPrice;
+    if (this.allied && this.allied(sellerId, tag)) return TRADE.allyPrice;
     return TRADE.price;
   },
   tradePartners(k, tag = this.cur) {

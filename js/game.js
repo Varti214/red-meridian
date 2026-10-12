@@ -857,7 +857,7 @@ const Game = {
   },
   setArmyOrg(v) { this.armies().forEach(a => { a.org = v; }); },
   landOrg(c, Y = c.ctrl) {
-    const A = this.armiesAt(c.id, Y), d = A.reduce((s, a) => s + a.divs, 0);
+    const A = this.defendersAt ? this.defendersAt(c.id, Y) : this.armiesAt(c.id, Y), d = A.reduce((s, a) => s + a.divs, 0);
     return d ? A.reduce((s, a) => s + a.org * a.divs, 0) / d : 100;
   },
   cleanArmies(tag) {

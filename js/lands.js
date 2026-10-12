@@ -204,20 +204,20 @@ Object.assign(Game, {
   /* ---------------- Армии на регионах ---------------- */
   landDefenders(r, Y = r.ctrl) {
     if (!this.isPower(Y)) return this.garrison(r);
-    let s = this.armiesAt(r.id, Y).reduce((t, a) => t + a.divs, 0);
+    let s = this.defendersAt(r.id, Y).reduce((t, a) => t + a.divs, 0);
     if (r.id === this.capitalRegion(Y)) s += this.P(Y).divs;
     return s;
   },
   landDefense(r, Y = r.ctrl) {
     const mix = {};
-    for (const a of this.armiesAt(r.id, Y)) this.addMix(mix, a.mix);
+    for (const a of this.defendersAt(r.id, Y)) this.addMix(mix, a.mix);
     if (r.id === this.capitalRegion(Y)) this.addMix(mix, this.P(Y).rmix);
     const st = this.mixStats(mix, Y);
     return { divs: st.divs, def: st.def, at: st.at };
   },
   takeLosses(r, Y, n) {
     if (n <= 0) return 0;
-    const A = this.armiesAt(r.id, Y);
+    const A = this.defendersAt(r.id, Y);
     const cap = r.id === this.capitalRegion(Y) ? this.P(Y).divs : 0;
     const total = A.reduce((s, a) => s + a.divs, 0) + cap;
     if (total <= 0) return 0;
@@ -226,6 +226,7 @@ Object.assign(Game, {
     if (cap) this.loseReserve(n * cap / total, Y);
     this.P(Y).stats.divLost += n;
     this.cleanArmies(Y);
+    for (const T of this.alliesOfPower(Y)) this.cleanArmies(T);
     return n;
   },
   newArmy(tag, name, divs, loc, mix) {
@@ -260,7 +261,7 @@ Object.assign(Game, {
       for (const n of Regions.nb(cur)) {
         if (n in prev) continue;
         const r = this.r(n);
-        if (!r || r.ctrl !== tag) continue;
+        if (!r || !this.friendly(r, tag)) continue;     // своя земля или союзника
         prev[n] = cur;
         if (n === to) {
           const path = [];
@@ -277,7 +278,7 @@ Object.assign(Game, {
   canMove(a, r) {
     if (!a) return 'Армия не найдена';
     if (this.outReason()) return this.outReason();
-    if (!r || r.ctrl !== this.cur) return 'Двигаться можно только по своей территории';
+    if (!this.friendly(r)) return 'Двигаться можно только по своей территории и земле союзника';
     if (r.id === a.loc) return 'Армия уже здесь';
     if (!this.armyPath(a.loc, r.id)) return 'Нет пути по нашей территории';
     return null;
@@ -369,7 +370,7 @@ Object.assign(Game, {
         if (--o.left > 0) continue;
         const next = o.path.shift();
         const r = this.r(next);
-        if (!r || r.ctrl !== this.cur) {
+        if (!this.friendly(r)) {
           a.order = { type: 'hold' };
           this.log('mil', 'Марш прерван', `${a.name} остановилась: путь отрезан.`, a.loc);
           continue;
@@ -480,10 +481,11 @@ Object.assign(Game, {
   },
 
   // Армии державы Y из потерянного региона отступают в соседний свой (или гибнут в котле)
-  retreatArmies(r, Y) {
+  retreatArmies(r, Y, ally) {
+    if (!ally) for (const T of this.alliesOfPower(Y)) this.retreatArmies(r, T, true);
     const A = this.armiesAt(r.id, Y);
     if (!A.length) return;
-    const back = Regions.nb(r.id).map(n => this.r(n)).find(t => t && t.ctrl === Y);
+    const back = Regions.nb(r.id).map(n => this.r(n)).find(t => t && t.ctrl === Y) || Regions.nb(r.id).map(n => this.r(n)).find(t => this.friendly(t, Y));
     for (const a of A) {
       if (a.battle) this.as(Y, () => this.finishBattle(a, 'invalid', 0, true));
       a.order = { type: 'hold' };

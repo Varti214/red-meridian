@@ -61,6 +61,8 @@ const Bot = {
     if (S.day % 10 === 0) this.diplomacy();
     if (S.day % 15 === 0) this.expand();
     if (S.day % 7 === 3) this.trade();
+    // Союзнический долг: вступаем в войны союзника
+    if (S.day % 10 === 5) for (const w of Game.allyWars()) if (!Game.canJoinAllyWar(w.id)) Game.joinAllyWar(w.id);
   },
 
   /* Торговля: закрыть нехватку ресурсов самым дешёвым импортом, лишние контракты — разорвать */
@@ -80,11 +82,26 @@ const Bot = {
     }
   },
 
+  // Решения, которые нельзя оценить по подсказке: союз, война союзника, голосования ООН
+  special(p) {
+    const X = Game.cur, id = p.def.id || '';
+    if (id === 'sys_alliance_offer') return 0;
+    if (id === 'sys_ally_war') return 0;
+    if (id.startsWith('un_vote_') && p.ctx) {
+      const t = p.ctx.target, opts = p.options || p.def.options;
+      const friend = t === X || Game.allied(X, t) || (Game.c(t) && (Game.isAlly(Game.c(t), X) || Game.alliesOfPower(X).some(A => Game.isAlly(Game.c(t), A))));
+      if (friend) return opts.length > 3 ? 3 : 1;          // вето, если есть, иначе «против»
+      const enemy = Game.isPower(t) ? Game.powersAtWar(X, t) : Game.c(t) && Game.atWar(Game.c(t));
+      if (enemy) return 0;
+      return p.ctx.type === 'peace' ? 1 : 2;               // не мешаем своим войнам, иначе воздерживаемся
+    }
+    return null;
+  },
   events() {
     const X = Game.cur;
     for (const [iid, p] of Object.entries(Game.pending)) {
       if (p.power !== X) continue;
-      Game.chooseEvent(iid, this.bestOption(p.options || p.def.options));
+      Game.chooseEvent(iid, this.special(p) ?? this.bestOption(p.options || p.def.options));
       Bus.emit('eventClosed', { iid, power: X });
     }
   },

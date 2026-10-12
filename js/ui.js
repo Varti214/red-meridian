@@ -210,6 +210,9 @@ const UI = {
       case 'justify': return run('justify', id);
       case 'declare': return this.confirmDeclare(id);
       case 'peace': return run('peace', id);
+      case 'alliance-propose': return run('proposeAlliance', id);
+      case 'alliance-break': return run('breakAlliance', id);
+      case 'ally-war': return run('joinAllyWar', id);
       case 'treaty': return this.openPeace(a.dataset.conf ? { conf: a.dataset.conf } : { id });
       case 'influence': return run('influence', id);
       case 'integrate': return run('integrate', id);
@@ -534,7 +537,7 @@ const UI = {
     return JSON.stringify([r.id, r.ctrl, N.faction, Game.atWar(r), N.cb && N.cb[me] === true, N.id && !!Game.justifying(N), !!N.influence, !!N.integrate, r.radioactive,
       r.factories, r.fort, Math.round(r.control), N.id ? Math.round(Game.intel(N) / 5) : 0, N.sab, est.lo, est.hi, Math.round(r.pop / 1e5), N.id ? N.factories : 0,
       reasons, P.divs, P.warheads, Game.S.tension >= 50, Math.round(Game.S.ruua || 0), Math.round(Game.S.uaw || 0), Math.round(Game.S.tension / 4), Game.mods.nukes, P.techs.length,
-      N.capitulated, (Game.myConf(me) || {}).id, N.id && !Game.isPower(r.ctrl) ? Game.warScore(me, N) : 0,
+      N.capitulated, (Game.myConf(me) || {}).id, JSON.stringify(Game.S.palliance || {}), Game.allyWars().length, N.id && !Game.isPower(r.ctrl) ? Game.warScore(me, N) : 0,
       N.id ? this.polSig(r.ctrl === me ? Game.c(POWERS[me].capital) : N) : 0]);
   },
 
@@ -618,7 +621,8 @@ const UI = {
     if (own && r.id === Game.capitalRegion(me)) badges.push(this.badge('Столица', 'sov'));
     if (own) badges.push(this.badge(r.core === me ? 'Исконная земля' : 'Присоединённая земля', 'sov'));
     if (!own) badges.push(this.badge(this.ownerLabel(r), rival ? 'major' : 'fac'));
-    if (rival) badges.push(this.badge('Держава игрока', 'war'));
+    if (rival && Game.allied(me, Y)) badges.push(this.badge('Союзная держава', 'sov'));
+    else if (rival) badges.push(this.badge('Держава игрока', 'war'));
     if (N && Game.isAlly(N)) badges.push(this.badge('Союзник', 'sov'));
     if (N && N.major && !own && !rival) badges.push(this.badge('Великая держава', 'major'));
     if (war) badges.push(this.badge('Война', 'war'));
@@ -723,6 +727,16 @@ const UI = {
     } else if (N) {
       const c = N;
       html += `<div class="cp-sec"><div class="cp-sec-title">Дипломатия: ${U.esc(Y ? POWERS[Y].name : c.name)}</div>`;
+      if (rival) {
+        if (Game.allied(me, Y)) html += this.actBtn({ act: 'alliance-break', id: Y, label: 'Разорвать союз', icon: 'i-flag', cls: 'act-danger',
+          sub: 'Армии на их земле вернутся домой', tip: 'Союз держав-игроков: общие войны, проход армий, общая победа.' });
+        else html += this.actBtn({ act: 'alliance-propose', id: Y, label: 'Предложить военный союз', icon: 'i-flag', cls: 'act-gold', why: Game.canProposeAlliance(Y),
+          sub: 'Решение примет второй игрок', cost: this.costTag(30),
+          tip: 'Союзники не воюют друг с другом, вместе обороняют земли, проводят армии по территории друг друга, торгуют по союзной цене, вступают в войны друг друга и побеждают вместе.' });
+      }
+      const allyW = !war && Game.allyWars().find(w => w.id === c.id);
+      if (allyW) html += this.actBtn({ act: 'ally-war', id: c.id, label: 'Вступить в войну союзника', icon: 'i-swords', cls: 'act-danger', why: Game.canJoinAllyWar(c.id),
+        sub: `Против них воюет ${POWERS[allyW.ally].name} · обоснование не нужно` });
       const conf = c.capitulated === me && Game.myConf(me);
       if (conf) {
         html += this.actBtn({ act: 'treaty', id: r.id, data: `data-conf="${conf.id}"`, label: 'Мирная конференция', icon: 'i-flag', cls: 'act-gold',
@@ -732,10 +746,12 @@ const UI = {
         html += this.actBtn({ act: 'treaty', id: rival ? r.id : c.id, label: 'Мирные переговоры', icon: 'i-flag', why: Game.canPeace(c),
           sub: `Очки войны: ${score} · ${rival ? 'решение примет второй игрок' : 'белый мир: шанс ' + U.pct(Game.peaceChance(c))}`, cost: this.costTag(CFG.PEACE_PP),
           tip: 'Потребуйте регионы и другие условия на очки войны — или предложите белый мир.' });
+      } else if (rival && Game.allied(me, Y)) {
+        // союзнику войну не объявляют
       } else if (c.cb[me] === true) {
         html += this.actBtn({ act: 'declare', id: c.id, label: 'Объявить войну', icon: 'i-swords', cls: 'act-danger',
           sub: `Напряжённость +${U.fmt(Game.declareTension(c), 0)}%`, cost: '' });
-      } else {
+      } else if (!allyW) {
         const jc = Game.justifyCost(c);
         html += this.actBtn({ act: 'justify', id: c.id, label: 'Обосновать войну', icon: 'i-swords', why: Game.canJustify(c),
           sub: `${U.days(jc.days)} · напряжённость +${U.fmt(CFG.JUSTIFY.tension * (c.major ? 1.5 : 1), 0)}%`, cost: this.costTag(jc.pp),
@@ -2264,13 +2280,15 @@ const UI = {
   showGameOver(o) {
     if (this.isOpen('gameover') || !this.started) return;
     const S = Game.S, st = this.P().stats, me = Game.me;
-    const win = o.type === 'victory' && o.winner === me;
+    const win = o.type === 'victory' && (o.winner === me || (o.allies || []).includes(me));
     const wName = o.winner ? POWERS[o.winner].name : '';
     const texts = {
       capital: ['Поражение', 'Столица пала', 'Вражеские танки на главной площади. Правительство эвакуировано, но война проиграна.'],
       winter: ['Поражение', 'Ядерная зима', 'Пепел сотен городов закрыл солнце. Победителей в этой войне нет — только выжившие.'],
       industry: win ? ['Победа', 'Мировая гегемония', 'Больше половины промышленности планеты работает на нашу экономику.'] : ['Поражение', 'Гегемония соперника', `${wName} контролирует больше половины мировой промышленности.`],
       rivals: win ? ['Победа', 'Крах соперников', 'Столицы обоих соперников пали. Над ними — наши знамёна.'] : ['Поражение', 'Крах соперников', `${wName} захватила столицы соперников.`],
+      alliance: win ? ['Победа', 'Победа союза', 'Все соперники повержены. Мир принадлежит нашему союзу.'] : ['Поражение', 'Держава повержена', `Союз держав (${(o.allies || []).map(t => POWERS[t].name).join(', ')}) правит миром.`],
+      allianceIndustry: win ? ['Победа', 'Гегемония союза', 'Больше половины промышленности планеты работает на наш союз.'] : ['Поражение', 'Гегемония союза', `Союз держав (${(o.allies || []).map(t => POWERS[t].name).join(', ')}) контролирует больше половины мировой промышленности.`],
       lastStanding: win ? ['Победа', 'Последняя держава', 'Все соперники-люди капитулировали. Мир принадлежит нам.'] : ['Поражение', 'Держава повержена', `${wName} остаётся единственной великой державой.`]
     };
     const [k, title, text] = texts[o.reason] || texts.capital;
