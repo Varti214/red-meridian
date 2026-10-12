@@ -53,7 +53,7 @@ const MapView = {
     }
     if (mode === 'globe' && this.canGlobe()) {
       try {
-        GlobeRenderer.init(this.el, Geo.features);
+        GlobeRenderer.init(this.el, this.regionFeatures());
         this.impl = GlobeRenderer;
         this.mode = 'globe';
       } catch (e) {
@@ -63,7 +63,7 @@ const MapView = {
       }
     }
     if (!this.impl) {
-      FlatRenderer.init(this.el, Geo.features);
+      FlatRenderer.init(this.el, this.regionFeatures());
       this.impl = FlatRenderer;
       this.mode = 'flat';
     }
@@ -105,7 +105,34 @@ const MapView = {
     this.impl && this.impl.refreshPolygons();
   },
 
-  focus(id) { this.impl && Geo.meta[id] && this.impl.focus(id); },
+  focus(id) { this.impl && Regions.center(id) && this.impl.focus(id); },
+
+  /* ---- Регионы как многоугольники карты (строятся один раз) ---- */
+  regionFeatures() {
+    Regions.build();
+    if (!this._rf) {
+      this._rf = Regions.list.map(r => ({
+        type: 'Feature', properties: { id: r.id, cid: r.cid },
+        geometry: { type: 'MultiPolygon', coordinates: r.polys.map(p => [p.concat([p[0]])]) }
+      }));
+    }
+    return this._rf;
+  },
+  // Контуры государств — жирные линии поверх тонких границ регионов
+  countryOutlines() {
+    if (!this._co) {
+      this._co = [];
+      for (const f of Geo.features) {
+        if (!f.geometry) continue;
+        const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+        for (const p of polys) {
+          const ring = p[0].filter((v, i) => i % 2 === 0 || i === p[0].length - 1);
+          this._co.push({ pts: ring.map(([lng, lat]) => [lat, lng]), color: 'rgba(6,9,14,0.7)', w: 1.1, dash: 1, gap: 0, time: 0, outline: true });
+        }
+      }
+    }
+    return this._co;
+  },
 
   setSelectedArmy(id) {
     this.selectedArmy = id;
@@ -122,43 +149,47 @@ const MapView = {
     try { this.impl.refreshOverlays(); this.trackLosses(); } catch (e) { console.error('[Map] armies', e); }
   },
 
-  // Земли, куда выбранная армия может наступать (соседи, с которыми война)
+  // Регионы, куда выбранная армия может наступать (соседние, с которыми война; у ВДВ — все в радиусе)
   armyTargets() {
     const a = this.selectedArmy && Game.army(this.selectedArmy, Game.me);
     if (!a) return null;
-    const set = new Set((Geo.meta[a.loc] || { neighbors: [] }).neighbors.filter(n => Game.atWar(Game.c(n), Game.me)));
-    // Десантная армия: все вражеские земли в радиусе высадки
-    if (Game.isAirborne(a)) Game.fronts(Game.me).forEach(c => { if (Game.airDistance(c, Game.me) <= CFG.AIRBORNE.range) set.add(c.id); });
+    const set = new Set(Regions.nb(a.loc).filter(n => Game.atWar(Game.r(n), Game.me)));
+    if (Game.isAirborne(a)) {
+      for (const r of Game.regionList()) if (r.ctrl !== Game.me && Game.atWar(r, Game.me) && Game.airDistance(r, Game.me) <= CFG.AIRBORNE.range) set.add(r.id);
+    }
     return set;
   },
 
-  /* ---- Единая логика стиля страны для обоих рендереров ---- */
+  /* ---- Единая логика стиля региона для обоих рендереров ---- */
   style(id) {
-    const c = Game.S && Game.c(id);
-    if (!c) return { cap: '#33404d', side: '#1a2129', stroke: 'rgba(255,255,255,0.15)', alt: 0.005 };
+    const r = Game.S && Game.r(id);
+    if (!r) return { cap: '#33404d', side: '#1a2129', stroke: 'rgba(255,255,255,0.15)', alt: 0.005 };
     const hov = id === this.hovered, sel = id === this.selected;
-    const me = Game.me;
-    const front = Game.atWar(c, me);
-    let base, side, stroke;
-    if (c.radioactive) { base = COLORS.waste; side = '#1c2208'; stroke = COLORS.wasteStroke; }
-    else if (front) { base = COLORS.front; side = '#5a2a08'; stroke = COLORS.frontStroke; }
-    else if (this.layer === 'ide' && !c.inert && Game.gov(c)) { base = IDEOLOGIES[Game.gov(c).ide].color; side = U.shade(base, -0.55); stroke = '#ffffff'; }
-    else if (Game.isPower(c.ctrl)) { const D = POWERS[c.ctrl]; base = D.color; side = D.side; stroke = D.stroke; }
-    else { const F = FACTIONS[c.faction] || FACTIONS.NEU; base = F.color; side = F.side; stroke = F.stroke; }
+    const me = Game.me, N = Game.ownerNation(r);
+    const front = Game.atWar(r, me);
+    let base, side;
+    if (r.radioactive) { base = COLORS.waste; side = '#1c2208'; }
+    else if (front) { base = COLORS.front; side = '#5a2a08'; }
+    else if (this.layer === 'ide' && N && !N.inert && Game.gov(N)) { base = IDEOLOGIES[Game.gov(N).ide].color; side = U.shade(base, -0.55); }
+    else if (Game.isPower(r.ctrl)) { const D = POWERS[r.ctrl]; base = D.color; side = D.side; }
+    else { const F = FACTIONS[N ? N.faction : 'NEU'] || FACTIONS.NEU; base = F.color; side = F.side; }
+    // Оккупированный регион (держит не его страна) — чуть темнее
+    const home = Game.c(r.cid);
+    if (home && r.ctrl !== home.ctrl && !front && !r.radioactive) base = U.shade(base, -0.14);
 
     let cap = base;
     if (front && (hov || sel)) cap = COLORS.frontHi;
     else if (sel) cap = U.shade(base, 0.35);
     else if (hov) cap = U.shade(base, 0.22);
 
-    let strokeColor = U.rgba(stroke, 0.55);
-    if (c.cb[me]) strokeColor = COLORS.justify;
+    let strokeColor = front ? 'rgba(255,215,140,0.55)' : 'rgba(8,10,14,0.38)';
+    if (N && N.cb && N.cb[me]) strokeColor = COLORS.justify;
     const targets = this.armyTargetsCache;
     const target = targets && targets.has(id);
     if (target) strokeColor = '#ffe14d';
     if (sel) strokeColor = COLORS.selected;
 
-    const alt = 0.006 + (Game.isPower(c.ctrl) ? 0.004 : 0) + (front ? 0.006 : 0) + (hov ? 0.008 : 0) + (sel ? 0.016 : 0) + (target ? 0.006 : 0);
+    const alt = 0.006 + (Game.isPower(r.ctrl) ? 0.004 : 0) + (front ? 0.006 : 0) + (hov ? 0.008 : 0) + (sel ? 0.016 : 0) + (target ? 0.006 : 0);
     return { cap, capA: U.rgba(cap, 0.93), side: U.rgba(side, 0.9), stroke: strokeColor, alt };
   },
 
@@ -170,16 +201,15 @@ const MapView = {
     for (const tag of Game.tags()) {
       for (const a of Game.armies(tag)) {
         if (a.order.type !== 'attack' || !a.battle) continue;
-        const c = Game.c(a.order.target);
-        if (!c || (tag !== me && c.ctrl !== me)) continue;
-        const k = tag + '>' + c.id;
-        (groups[k] = groups[k] || { tag, c, armies: [] }).armies.push(a);
+        const r = Game.r(a.order.target);
+        if (!r || (tag !== me && r.ctrl !== me)) continue;
+        const k = tag + '>' + r.id;
+        (groups[k] = groups[k] || { tag, c: r, armies: [] }).armies.push(a);
       }
     }
     for (const g of Object.values(groups)) {
-      const fr = typeof Regions !== 'undefined' && Regions.frontRegion(g.c);
-      g.front = fr ? fr.c : Geo.meta[g.c.id].centroid;
-      g.defTag = Game.powerOf(g.c) || g.c.ctrl;
+      g.front = Regions.center(g.c.id);
+      g.defTag = g.c.ctrl;
       const last = g.armies[0].battle.last;
       g.ratio = last ? last.ratio : 1;
       g.att = g.armies.reduce((s, a) => s + a.divs, 0);
@@ -190,19 +220,18 @@ const MapView = {
     }
     return out;
   },
-  // Вражеские гарнизоны у нашего фронта (ИИ-страны, с которыми идёт война)
+  // Гарнизоны ИИ в вражеских регионах у нашего фронта
   garrisons() {
     const out = [];
     if (!Game.S || !Game.P(Game.me)) return out;
     const me = Game.me, busy = new Set(this.battles().map(b => b.c.id));
-    for (const c of Game.fronts(me)) {
-      if (busy.has(c.id) || Game.isPower(c.ctrl) || c.radioactive) continue;
-      const ours = (Geo.meta[c.id] || { neighbors: [] }).neighbors.find(n => { const t = Game.c(n); return t && t.ctrl === me; });
-      if (!ours) continue;
-      const p = Geo.frontAnchor(c.id, ours, 0.3) || Geo.meta[c.id].centroid;
-      const est = Game.estDivs(c, me);
+    for (const r of Game.frontRegions(me)) {
+      if (busy.has(r.id) || Game.isPower(r.ctrl) || r.radioactive) continue;
+      const ours = Regions.nb(r.id).find(n => { const t = Game.r(n); return t && t.ctrl === me; });
+      const p = ours ? Regions.toward(r.id, ours, 0.45) : Regions.center(r.id);
+      const est = Game.estDivs(r, me);
       if (est.hi < 1) continue;
-      out.push({ c, lat: p.lat, lng: p.lng, tag: c.ctrl, text: est.exact ? U.fmt(est.mid, 0) : '~' + est.hi });
+      out.push({ c: r, lat: p.lat, lng: p.lng, tag: r.ctrl, text: est.exact ? U.fmt(est.mid, 0) : '~' + est.hi });
     }
     return out;
   },
@@ -230,15 +259,15 @@ const MapView = {
     if (!Game.S) return out;
     const me = Game.me;
     for (const tag of Game.tags()) {
-      const D = POWERS[tag], cap = Game.c(D.capital);
+      const D = POWERS[tag], cap = Game.r(Game.capitalRegion(tag));
       if (cap && cap.ctrl === tag) out.push({ key: 'capital-' + tag, kind: tag === me ? 'capital' : 'capital-other', icon: 'i-pp', ...D.capitalPos, label: D.capitalName });
     }
+    Game.eachRegion(r => { if (r.radioactive) { const p = Regions.center(r.id); out.push({ key: 'rad-' + r.id, kind: 'rad', icon: 'i-nuke', lat: p.lat, lng: p.lng }); } });
     Game.eachCountry(c => {
       const m = Geo.meta[c.id];
-      if (!m) return;
+      if (!m || c.inert || (c.ctrl !== c.id && !Game.isPowerHome(c))) return;
       const pos = m.centroid;
-      if (c.radioactive) out.push({ key: 'rad-' + c.id, kind: 'rad', icon: 'i-nuke', lat: pos.lat, lng: pos.lng });
-      else if (Game.atWar(c, me)) out.push({ key: 'war-' + c.id, kind: 'war', icon: 'i-swords', lat: pos.lat, lng: pos.lng });
+      if (Game.atWar(c, me)) out.push({ key: 'war-' + c.id, kind: 'war', icon: 'i-swords', lat: pos.lat, lng: pos.lng });
       else if (c.cb[me] === true) out.push({ key: 'cb-' + c.id, kind: 'cb', icon: 'i-flag', lat: pos.lat, lng: pos.lng });
       else if (c.cb[me] || (c.influence && c.influence.by === me) || (c.integrate && c.integrate.by === me)) out.push({ key: 'prj-' + c.id, kind: 'prj', icon: c.cb[me] ? 'i-flag' : 'i-pp', lat: pos.lat, lng: pos.lng });
     });
@@ -251,7 +280,7 @@ const MapView = {
     if (!Game.S || !Game.P(Game.me)) return out;
     for (const a of Game.armies(Game.me)) {
       if (a.order.type !== 'attack') continue;
-      const from = this.armyPos(a, Game.me), to = Geo.meta[a.order.target] && Geo.meta[a.order.target].centroid;
+      const from = this.armyPos(a, Game.me), to = Regions.center(a.order.target);
       if (!from || !to) continue;
       const sel = a.id === this.selectedArmy;
       out.push({
@@ -262,20 +291,27 @@ const MapView = {
     return out;
   },
 
-  /* ---- Линия фронта: участки границы между нашими землями и врагом ---- */
+  /* ---- Линия фронта: общие границы наших регионов с вражескими ---- */
   frontLines() {
     const out = [];
     if (!Game.S || !Game.P(Game.me)) return out;
     const me = Game.me;
     const attacking = new Set(Game.armies(me).filter(a => a.order.type === 'attack').map(a => a.loc + '>' + a.order.target));
-    for (const c of Game.lands(me)) {
-      for (const n of (Geo.meta[c.id] || { neighbors: [] }).neighbors) {
-        const e = Game.c(n);
+    for (const r of Game.lands(me)) {
+      const g = Regions.get(r.id);
+      if (!g) continue;
+      for (const n of g.nb) {
+        const e = Game.r(n);
         if (!e || !Game.atWar(e, me)) continue;
-        const hot = attacking.has(c.id + '>' + n);
-        for (const pts of Geo.borderLines(c.id, n)) {
-          out.push({ pts, color: hot ? ['#ffe14d', '#ff2d1f'] : ['#ff1f1f', '#b30000'], w: hot ? 4.5 : 3,
-            dash: pts.sea ? 0.03 : 1, gap: pts.sea ? 0.02 : 0, time: pts.sea ? 0 : 0 });
+        const hot = attacking.has(r.id + '>' + n);
+        const runs = g.border[n];
+        if (runs && runs.length) {
+          for (const run of runs) out.push({ pts: run.map(([lng, lat]) => [lat, lng]), color: hot ? ['#ffe14d', '#ff2d1f'] : ['#ff1f1f', '#b30000'], w: hot ? 4.5 : 3, dash: 1, gap: 0, time: 0 });
+        } else {
+          const A = Regions.center(r.id), B = Regions.center(n);
+          const pts = [[A.lat, A.lng], [B.lat, B.lng]];
+          pts.sea = true;
+          out.push({ pts, color: ['#ff1f1f', '#b30000'], w: 2.5, dash: 0.03, gap: 0.02, time: 0 });
         }
       }
     }
@@ -288,28 +324,20 @@ const MapView = {
     if (!Game.S || !Game.P(Game.me)) return out;
     for (const a of Game.armies(Game.me)) {
       if (a.order.type !== 'move' || !a.order.path.length) continue;
-      const pts = [this.armyPos(a, Game.me)].concat(a.order.path.map(id => Geo.meta[id].centroid)).map(p => [p.lat, p.lng]);
+      const pts = [this.armyPos(a, Game.me)].concat(a.order.path.map(id => Regions.center(id))).map(p => [p.lat, p.lng]);
       out.push({ pts, color: ['rgba(255,255,255,0.9)', 'rgba(160,220,255,0.9)'], w: 2, dash: 0.02, gap: 0.015, time: 4000 });
     }
     return out;
   },
 
-  /* ---- Где на карте стоит фишка армии ---- */
+  /* ---- Где на карте стоит фишка армии: в своём регионе, ближе к врагу ---- */
   armyPos(a, tag) {
     const loc = a.loc;
-    if (a.order.type === 'attack') {
-      // Армия стоит на линии фронта: в последнем занятом ею регионе
-      const c = Game.c(a.order.target);
-      if (c && c.siege && c.siege.by === tag && typeof Regions !== 'undefined') {
-        const occ = Regions.occupied(c);
-        if (occ.length) return occ[occ.length - 1].c;
-      }
-      return Geo.frontAnchor(loc, a.order.target, 0.25);
-    }
-    // В обороне: у границы с ближайшим врагом, иначе в центре земли
-    const enemy = (Geo.meta[loc] || { neighbors: [] }).neighbors.find(n => Game.atWar(Game.c(n), tag));
-    if (enemy) return Geo.frontAnchor(loc, enemy, 0.3);
-    return Geo.meta[loc] && Geo.meta[loc].centroid;
+    if (a.order.type === 'attack' && !a.order.air) return Regions.toward(loc, a.order.target, 0.7);
+    if (a.order.type === 'attack') return Regions.center(loc);
+    const enemy = Regions.nb(loc).find(n => Game.atWar(Game.r(n), tag));
+    if (enemy) return Regions.toward(loc, enemy, 0.5);
+    return Regions.center(loc);
   },
 
   /* ---- Фишки армий: свои (кликабельные) и армии других игроков у наших границ ---- */
@@ -320,19 +348,17 @@ const MapView = {
     for (const tag of Game.tags()) {
       for (const a of Game.armies(tag)) {
         const mine = tag === me;
-        if (!mine) {
-          // Чужую армию видно, только если она стоит у наших границ или на нашей земле
-          const loc = Game.c(a.loc);
-          if (!loc || !(Game.bordersPower(a.loc, me) || loc.ctrl === me)) continue;
-        }
+        const loc = Game.r(a.loc);
+        if (!mine && (!loc || !(Game.bordersPower(a.loc, me) || loc.ctrl === me))) continue;
         const p = this.armyPos(a, tag);
         if (!p) continue;
         const k = Math.round(p.lat * 2) + ':' + Math.round(p.lng * 2);
         const i = stack[k] = (stack[k] || 0) + 1;
-        const intel = mine ? 100 : Game.intel(Game.c(a.loc), me);
+        const home = Game.c(POWERS[tag].capital);
+        const intel = mine ? 100 : (home ? Game.intel(home, me) : 0);
         out.push({
           key: 'army-' + a.id, kind: 'army', id: a.id, tag, mine,
-          lat: p.lat - (i - 1) * 1.1, lng: p.lng,
+          lat: p.lat - (i - 1) * 0.9, lng: p.lng,
           divs: mine || intel >= 80 ? String(Math.round(a.divs)) : '~' + Math.max(5, Math.round(a.divs / 5) * 5),
           org: a.org, name: a.name, order: a.order.type, sel: a.id === this.selectedArmy
         });
@@ -341,30 +367,11 @@ const MapView = {
     return out;
   },
 
-  // Откуда рисовать дугу удара: от ближайшей нашей территории, но не дальше 12° —
-  // иначе дуга к Финляндии тянулась бы из центра Сибири (центр огромной РСФСР)
+  // Откуда рисовать дугу удара: из ближайшего нашего региона (или из столицы)
   sourceFor(targetId, tag = Game.me) {
     const home = POWERS[tag] ? POWERS[tag].capitalPos : CFG.CAPITAL_POS;
-    const meta = Geo.meta[targetId];
-    if (!meta) return home;
-    const to = meta.centroid;
-    const nb = meta.neighbors.map(n => Game.c(n)).filter(c => c && c.ctrl === tag);
-    if (!nb.length) return home;
-    let best = null, bestD = Infinity;
-    for (const c of nb) {
-      const d = Geo.arcDistance(to, Geo.meta[c.id].centroid);
-      if (d < bestD) { bestD = d; best = Geo.meta[c.id].centroid; }
-    }
-    const MAX = 12;
-    if (bestD <= MAX) return best;
-    let dl = best.lng - to.lng;
-    if (dl > 180) dl -= 360;
-    if (dl < -180) dl += 360;
-    const t = MAX / bestD;
-    let lng = to.lng + dl * t;
-    if (lng > 180) lng -= 360;
-    if (lng < -180) lng += 360;
-    return { lat: to.lat + (best.lat - to.lat) * t, lng };
+    const nb = Regions.nb(targetId).filter(n => { const r = Game.r(n); return r && r.ctrl === tag; });
+    return nb.length ? Regions.center(nb[0]) : home;
   },
 
   /* ---- Эффекты ---- */
@@ -394,9 +401,8 @@ const GlobeRenderer = {
       rendererConfig: { antialias: true, alpha: true, powerPreference: 'high-performance' }
     });
     this.g = g;
-    const id = f => f.properties.cid || f.properties.id;
+    const id = f => f.properties.id;
     this.features = features;
-    if (typeof Regions !== 'undefined') Regions.build();
 
     g.backgroundColor('rgba(0,0,0,0)')
       .showAtmosphere(true)
@@ -475,26 +481,7 @@ const GlobeRenderer = {
     if (!this.g) return;
     MapView.armyTargetsCache = MapView.armyTargets();
     try { this.updateLabels(); } catch (e) { console.error('[Map] labels', e); }
-    // Занятые регионы — поверх страны, цветом захватчика
-    const occ = [];
-    if (typeof Regions !== 'undefined' && Game.S) {
-      this.regionFeats = this.regionFeats || new Map();
-      Game.eachCountry(c => {
-        for (const r of Regions.occupied(c)) {
-          let f = this.regionFeats.get(r.id);
-          if (!f) { f = { type: 'Feature', properties: { id: 'R:' + r.id, cid: r.cid, region: r }, geometry: { type: 'MultiPolygon', coordinates: r.polys.map(p => [p.concat([p[0]])]) } }; this.regionFeats.set(r.id, f); }
-          f.properties.by = c.siege.by;
-          occ.push(f);
-        }
-      });
-    }
-    const key = occ.map(f => f.properties.id + f.properties.by).join();
-    if (key !== this.occKey) { this.occKey = key; this.g.polygonsData(this.features.concat(occ)); }
-    const st = f => {
-      if (!f.properties.region) return MapView.style(f.properties.id);
-      const col = Regions.ownerColor(f.properties.by), base = MapView.style(f.properties.cid);
-      return { capA: U.rgba(col, 0.95), side: U.rgba(U.shade(col, -0.5), 0.9), stroke: 'rgba(255,200,110,0.85)', alt: base.alt + 0.004 };
-    };
+    const st = f => MapView.style(f.properties.id);
     this.g.polygonCapColor(f => st(f).capA)
       .polygonSideColor(f => st(f).side)
       .polygonStrokeColor(f => st(f).stroke)
@@ -504,7 +491,7 @@ const GlobeRenderer = {
   refreshOverlays() {
     if (!this.g) return;
     this.g.arcsData(MapView.frontArcs().concat(this.tempArcs));
-    this.g.pathsData(MapView.frontLines().concat(MapView.movePaths()));
+    this.g.pathsData(MapView.countryOutlines().concat(MapView.frontLines(), MapView.movePaths()));
     this.g.ringsData(this.tempRings.slice());
     this.g.htmlElementsData(MapView.markers().concat(MapView.armyMarkers()));
   },
@@ -599,11 +586,12 @@ const GlobeRenderer = {
   },
 
   focus(id) {
-    const m = Geo.meta[id];
+    const c = Regions.center(id), g = Regions.get(id), m = Geo.meta[id];
+    const area = g ? g.area * 4 : m ? m.area : 50;
     const cur = this.g.pointOfView();
     let alt = cur.altitude;
-    if (alt < 0.9 || alt > 2.8) alt = U.clamp(0.6 + Math.sqrt(m.area) / 22, 0.95, 2.2);
-    this.g.pointOfView({ lat: m.centroid.lat, lng: m.centroid.lng, altitude: alt }, 900);
+    if (alt < 0.9 || alt > 2.8) alt = U.clamp(0.6 + Math.sqrt(area) / 22, 0.95, 2.2);
+    this.g.pointOfView({ lat: c.lat, lng: c.lng, altitude: alt }, 900);
   },
 
   addStars() {
@@ -646,7 +634,7 @@ const GlobeRenderer = {
 
   fxBattle(targetId, success, tag) {
     if (!this.g) return;
-    const to = Geo.meta[targetId].centroid, from = MapView.sourceFor(targetId, tag);
+    const to = Regions.center(targetId), from = MapView.sourceFor(targetId, tag);
     this.addTempArc({ sLat: from.lat, sLng: from.lng, eLat: to.lat, eLng: to.lng, color: ['rgba(255,60,40,1)', 'rgba(255,240,180,1)'],
       stroke: 1.1, dash: 0.25, gap: 3, init: 1, time: 900 }, 1000);
     const col = success ? [255, 190, 60] : [255, 70, 50];
@@ -655,7 +643,7 @@ const GlobeRenderer = {
 
   fxEnemyAttack(srcId, targetId, success) {
     if (!this.g) return;
-    const from = Geo.meta[srcId].centroid, to = Geo.meta[targetId].centroid;
+    const from = Regions.center(srcId), to = Regions.center(targetId);
     this.addTempArc({ sLat: from.lat, sLng: from.lng, eLat: to.lat, eLng: to.lng, color: ['rgba(120,160,255,1)', 'rgba(255,60,60,1)'],
       stroke: 0.9, dash: 0.25, gap: 3, init: 1, time: 1000 }, 1100);
     this.addTempRing({ lat: to.lat, lng: to.lng, maxR: 4, speed: 3, period: 500,
@@ -664,7 +652,7 @@ const GlobeRenderer = {
 
   fxNuke(targetId, from) {
     if (!this.g) return;
-    const to = Geo.meta[targetId].centroid;
+    const to = Regions.center(targetId);
     this.addTempArc({ sLat: from.lat, sLng: from.lng, eLat: to.lat, eLng: to.lng, color: ['rgba(255,255,255,1)', 'rgba(255,90,40,1)'],
       stroke: 1.4, dash: 0.18, gap: 3, init: 1, time: 1700 }, 1750);
     setTimeout(() => {
@@ -772,16 +760,16 @@ const FlatRenderer = {
       }
       return { id: f.properties.id, path };
     });
-    Regions.build();
-    this.regionShapes = Regions.list.map(r => {
+    // Контуры государств — для жирных границ поверх регионов
+    this.countryShapes = Geo.features.filter(f => f.geometry).map(f => {
       const path = new Path2D();
-      for (const ring of r.polys) {
-        ring.forEach(([x, y], i) => { const [px, py] = this.proj(x, y); if (i === 0) path.moveTo(px, py); else path.lineTo(px, py); });
+      const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+      for (const poly of polys) {
+        poly[0].forEach(([x, y], i) => { const [px, py] = this.proj(x, y); if (i === 0) path.moveTo(px, py); else path.lineTo(px, py); });
         path.closePath();
       }
-      return { r, path };
+      return path;
     });
-    this.regionPath = Object.fromEntries(this.regionShapes.map(s => [s.r.id, s.path]));
     this.bind();
     this.resize();
     const c = this.proj(70, 50);
@@ -841,9 +829,7 @@ const FlatRenderer = {
         this.clampView();
         this.dirty = true;
       } else if (e.target === cv) {
-        const id = this.hit(e);
-        MapView.hoverRegion = id ? this.hitRegion(e, id) : null;
-        MapView.onHover(id);
+        MapView.onHover(this.hit(e));
       }
     });
     this.on(window, 'mouseup', e => {
@@ -882,13 +868,6 @@ const FlatRenderer = {
     return null;
   },
 
-  hitRegion(e, cid) {
-    const r = this.canvas.getBoundingClientRect();
-    const x = (e.clientX - r.left) * this.dpr, y = (e.clientY - r.top) * this.dpr;
-    const v = this.view, ctx = this.ctx;
-    ctx.setTransform(v.scale * this.dpr, 0, 0, v.scale * this.dpr, v.tx * this.dpr, v.ty * this.dpr);
-    return (Regions.byCountry[cid] || []).find(rg => ctx.isPointInPath(this.regionPath[rg.id], x, y)) || null;
-  },
   refresh() { this.dirty = true; },
   refreshPolygons() { MapView.armyTargetsCache = MapView.armyTargets(); this.labelDirty = true; this.dirty = true; },
   refreshOverlays() { this.dirty = true; },
@@ -898,8 +877,8 @@ const FlatRenderer = {
   },
 
   focus(id) {
-    const m = Geo.meta[id];
-    const [x, y] = this.proj(m.centroid.lng, m.centroid.lat);
+    const m = Regions.center(id);
+    const [x, y] = this.proj(m.lng, m.lat);
     const v = this.view, w = this.el.clientWidth, h = this.el.clientHeight;
     const from = { tx: v.tx, ty: v.ty };
     const to = { tx: w / 2 - x * v.scale, ty: h / 2 - y * v.scale };
@@ -951,12 +930,16 @@ const FlatRenderer = {
       ctx.fillStyle = st.cap;
       ctx.fill(s.path);
     }
-    this.drawRegions(ctx, now);
+    // Тонкие границы регионов, затем жирные — государств, затем выделенный регион
+    ctx.lineWidth = 0.6 / v.scale;
+    for (const s of this.shapes) { ctx.strokeStyle = MapView.style(s.id).stroke; ctx.stroke(s.path); }
+    ctx.lineWidth = 1.4 / v.scale;
+    ctx.strokeStyle = 'rgba(6,9,14,0.75)';
+    for (const p of this.countryShapes) ctx.stroke(p);
     for (const s of this.shapes) {
-      const st = MapView.style(s.id);
-      const strong = s.id === MapView.selected || s.id === MapView.hovered;
-      ctx.lineWidth = (strong ? 2 : 0.8) / v.scale;
-      ctx.strokeStyle = st.stroke;
+      if (s.id !== MapView.selected && s.id !== MapView.hovered) continue;
+      ctx.lineWidth = 2.2 / v.scale;
+      ctx.strokeStyle = MapView.style(s.id).stroke;
       ctx.stroke(s.path);
     }
 
@@ -1030,40 +1013,6 @@ const FlatRenderer = {
       ctx.fillRect(x + 2, y + h - 4, (w - 4) * d.org / 100, 2);
       if (d.mine) this.armyBoxes.push({ x, y, w, h, id: d.id, tag: d.tag });
     }
-  },
-
-  /* ---- Регионы: тонкие границы; занятые — цветом захватчика со штриховкой ---- */
-  hatch(color) {
-    this.hatches = this.hatches || {};
-    if (this.hatches[color]) return this.hatches[color];
-    const cv = document.createElement('canvas');
-    cv.width = cv.height = 10;
-    const g = cv.getContext('2d');
-    g.strokeStyle = color; g.lineWidth = 3;
-    g.beginPath(); g.moveTo(-2, 12); g.lineTo(12, -2); g.moveTo(8, 12); g.lineTo(12, 8); g.moveTo(-2, 2); g.lineTo(2, -2); g.stroke();
-    return (this.hatches[color] = this.ctx.createPattern(cv, 'repeat'));
-  },
-  drawRegions(ctx) {
-    const v = this.view;
-    // Занятые области
-    Game.eachCountry(c => {
-      if (!c.siege || c.control >= 99.5) return;
-      const occ = Regions.occupied(c);
-      if (!occ.length) return;
-      const col = Regions.ownerColor(c.siege.by), def = MapView.style(c.id).cap;
-      const pat = this.hatch(U.rgba(def, 0.55));
-      if (pat.setTransform) pat.setTransform(new DOMMatrix().scale(1 / v.scale));
-      for (const r of occ) {
-        const p = this.regionPath[r.id];
-        ctx.fillStyle = col; ctx.fill(p);
-        ctx.fillStyle = pat; ctx.fill(p);
-        ctx.lineWidth = 1.6 / v.scale; ctx.strokeStyle = 'rgba(255,190,90,0.95)'; ctx.stroke(p);
-      }
-    });
-    // Границы всех регионов — видно, где какая область
-    ctx.lineWidth = 0.7 / v.scale;
-    ctx.strokeStyle = v.scale > 2.2 ? 'rgba(8,10,14,0.42)' : 'rgba(8,10,14,0.26)';
-    for (const s of this.regionShapes) if ((Regions.byCountry[s.r.cid] || []).length > 1) ctx.stroke(s.path);
   },
 
   /* ---- Фишка (как у армий): цвет владельца, знак пехоты НАТО, число дивизий ---- */
@@ -1266,19 +1215,19 @@ const FlatRenderer = {
   addFx(fx) { fx.t0 = fx.t0 || performance.now(); this.effects.push(fx); this.dirty = true; },
 
   fxBattle(targetId, success, tag) {
-    const to = Geo.meta[targetId].centroid, from = MapView.sourceFor(targetId, tag);
+    const to = Regions.center(targetId), from = MapView.sourceFor(targetId, tag);
     this.addFx({ type: 'arc', from, to, color: 'rgba(255,90,60,0.95)', width: 3, dur: 900 });
     this.addFx({ type: 'ring', lat: to.lat, lng: to.lng, r: 46, rgb: success ? '255,190,60' : '255,70,50', dur: 2200 });
   },
 
   fxEnemyAttack(srcId, targetId, success) {
-    const from = Geo.meta[srcId].centroid, to = Geo.meta[targetId].centroid;
+    const from = Regions.center(srcId), to = Regions.center(targetId);
     this.addFx({ type: 'arc', from, to, color: 'rgba(130,170,255,0.95)', width: 2.5, dur: 1000 });
     this.addFx({ type: 'ring', lat: to.lat, lng: to.lng, r: 36, rgb: success ? '255,50,50' : '120,170,255', dur: 2000 });
   },
 
   fxNuke(targetId, from) {
-    const to = Geo.meta[targetId].centroid;
+    const to = Regions.center(targetId);
     this.addFx({ type: 'arc', from, to, color: 'rgba(255,255,255,0.95)', width: 3, dur: 1700 });
     const t0 = performance.now() + 1700;
     this.addFx({ type: 'blast', lat: to.lat, lng: to.lng, dur: 3500, t0 });

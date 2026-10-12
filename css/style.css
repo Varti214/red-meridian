@@ -478,6 +478,7 @@ svg { display: block; }
 }
 .cp-title { flex: 1; min-width: 0; }
 .cp-name { font: 700 19px/1.15 var(--font-c); letter-spacing: 0.02em; }
+.cp-sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
 .cp-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .bdg {
   padding: 1px 6px;
@@ -519,6 +520,9 @@ svg { display: block; }
   line-height: 1.45;
 }
 .cp-note.warn { border-color: var(--orange); background: rgba(240, 138, 36, 0.08); }
+.cp-nation { display: flex; flex-direction: column; gap: 2px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 4px; background: rgba(255, 255, 255, 0.025); }
+.cp-nation b { font: 700 13px/1.2 var(--font-c); letter-spacing: 0.03em; }
+.cp-nation span { font-size: 11.5px; color: var(--muted); }
 
 .prj { margin-top: 10px; padding: 8px 10px; border: 1px solid rgba(227, 180, 72, 0.35); background: rgba(227, 180, 72, 0.06); border-radius: 3px; }
 .prj-top { display: flex; justify-content: space-between; font: 600 12px var(--font-c); margin-bottom: 6px; }

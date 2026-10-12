@@ -17,59 +17,44 @@
    ============================================================ */
 
 const Labels = {
-  rings: null,                 // id страны → самое большое внешнее кольцо [[lng, lat], …]
   cache: new Map(),            // подпись группы → раскладка
 
-  ringsOf(id) {
-    if (!this.rings) {
-      this.rings = {};
-      for (const f of Geo.features) {
-        const g = f.geometry;
-        if (!g) continue;
-        const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
-        let best = null, bestA = 0;
-        for (const p of polys) {
-          const r = p[0];
-          let a = 0;
-          for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += (r[j][0] + r[i][0]) * (r[j][1] - r[i][1]);
-          a = Math.abs(a / 2);
-          if (a > bestA) { bestA = a; best = r; }
-        }
-        if (best) this.rings[f.properties.id] = best;
-      }
-    }
-    return this.rings[id];
-  },
+  // Все кольца региона (у островных — несколько)
+  ringsOf(id) { const g = Regions.get(id); return g ? g.polys : []; },
 
-  /* Группы подписей: держава или страна + связанные сушей земли; оторванные земли — отдельно, мельче */
+  /* Группы подписей: регионы одного владельца, связанные сушей.
+     Группа со столицей владельца — его имя крупно; оторванные куски — то же имя, мельче */
   groups() {
     const byOwner = new Map();
-    Game.eachCountry(c => {
-      if (c.inert || !Geo.meta[c.id] || !this.ringsOf(c.id)) return;
-      (byOwner.get(c.ctrl) || byOwner.set(c.ctrl, []).get(c.ctrl)).push(c.id);
+    Game.eachRegion(r => {
+      const c = Game.c(r.cid);
+      if (!c || c.inert || !Regions.get(r.id)) return;
+      (byOwner.get(r.ctrl) || byOwner.set(r.ctrl, []).get(r.ctrl)).push(r.id);
     });
     const out = [];
     for (const [owner, ids] of byOwner) {
       const power = Game.isPower(owner);
-      const home = power ? POWERS[owner].capital : owner;
+      const capital = power ? Game.capitalRegion(owner) : Regions.capitalOf[owner];
       const name = power ? POWERS[owner].name : (Game.c(owner) || {}).name || owner;
       const set = new Set(ids), seen = new Set();
-      const start = set.has(home) ? home : ids[0];
-      // Компонента «дома»: соседи по суше
-      const comp = [], queue = [start];
-      seen.add(start);
-      while (queue.length) {
-        const id = queue.shift();
-        comp.push(id);
-        for (const n of Geo.meta[id].neighbors) {
-          if (set.has(n) && !seen.has(n) && !Geo.isSea(id, n)) { seen.add(n); queue.push(n); }
+      const comps = [];
+      const order = set.has(capital) ? [capital, ...ids] : ids;
+      for (const start of order) {
+        if (seen.has(start)) continue;
+        const comp = [], queue = [start];
+        seen.add(start);
+        while (queue.length) {
+          const id = queue.shift();
+          comp.push(id);
+          for (const n of Regions.nb(id)) if (set.has(n) && !seen.has(n) && !Regions.isSea(id, n)) { seen.add(n); queue.push(n); }
         }
+        comps.push(comp);
       }
-      out.push({ key: owner + ':' + comp.slice().sort().join(','), text: set.has(home) ? name : (Game.c(start) || {}).name, ids: comp, main: true });
-      for (const id of ids) {
-        if (seen.has(id)) continue;
-        out.push({ key: owner + '~' + id, text: Game.c(id).name, ids: [id], main: false });
-      }
+      comps.forEach((comp, i) => {
+        const main = i === 0 && set.has(capital);
+        // Кусок чужой страны без своего центра (например, оккупированная область) подписываем именем владельца, мельче
+        out.push({ key: owner + (main ? ':' : '~') + comp.slice().sort().join(','), text: name, ids: comp, main });
+      });
     }
     return out;
   },
@@ -94,10 +79,10 @@ const Labels = {
 
   layout(g) {
     // 1. Кольца в локальной проекции
-    const c0 = Geo.meta[g.ids[0]].centroid;
+    const c0 = Regions.center(g.ids[0]);
     const lng0 = c0.lng;
     let latSum = 0, n = 0;
-    const raw = g.ids.map(id => this.ringsOf(id).map(([lng, lat]) => {
+    const raw = g.ids.flatMap(id => this.ringsOf(id)).map(ring => ring.map(([lng, lat]) => {
       let x = lng;
       while (x - lng0 > 180) x -= 360;
       while (x - lng0 < -180) x += 360;

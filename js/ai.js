@@ -14,6 +14,9 @@ const AI = {
     const S = Game.S, t = S.tension, diff = Game.diff;
     const tags = Game.tags();
 
+    // Регионы ИИ понемногу восстанавливают контроль
+    Game.eachRegion(r => { if (!Game.isPower(r.ctrl) && r.control < 100) r.control = Math.min(100, r.control + 0.15); });
+
     Game.eachCountry(c => {
       if (Game.isPower(c.ctrl) || c.inert) return;
 
@@ -40,10 +43,6 @@ const AI = {
       const cap = c.baseDivs * (1 + (bloc ? t / 100 : t / 250)) + (atWar ? c.baseDivs * 0.5 + 2 : 0);
       if (c.divs < cap) c.divs = Math.min(cap, c.divs + rate);
 
-      // Противник понемногу восстанавливает контроль над своей территорией
-      if (c.control < 100) c.control = Math.min(100, c.control + 0.15);
-      if (c.siege && c.control >= 99.5) c.siege = null;     // контроль восстановлен — регионы снова свои
-
       // Усталость от войны копится каждый день
       if (atWar && c.ctrl === c.id) c.warDays = (c.warDays || 0) + 1;
 
@@ -57,9 +56,6 @@ const AI = {
     this.peaceOffers();
     this.nuclearPosture();
   },
-
-  // Какая ИИ-страна командует этой территорией (сама или оккупант)
-  owner(c) { return c.ctrl === c.id ? c : Game.c(c.ctrl); },
 
   /* Пороги напряжённости — с «гистерезисом»: событие повторится,
      только если напряжённость сначала заметно упадёт */
@@ -109,19 +105,22 @@ const AI = {
     } else if (t < 80) F.brink = false;
   },
 
-  /* Наступления ИИ на приграничные земли держав, с которыми он воюет */
+  /* Наступления ИИ-государств на приграничные регионы держав, с которыми они воюют.
+     Каждый день у государства есть шанс ударить из одного своего региона в соседний вражеский. */
   offensives() {
     const S = Game.S;
-    const aggr = 0.03 * (0.6 + S.tension / 100) * Game.diff.aiAggr;
-    Game.eachCountry(src => {
-      if (Game.isPower(src.ctrl) || src.divs < 1.5 || src.radioactive || src.inert) return;
-      const k = this.owner(src);
-      if (!k) return;
-      const enemies = Object.keys(k.wars).filter(t => k.wars[t] && Game.isPower(t) && !Game.P(t).out);
+    const aggr = 0.05 * (0.6 + S.tension / 100) * Game.diff.aiAggr;
+    Game.eachCountry(N => {
+      if (N.ctrl !== N.id || N.inert || N.divs < 1.5) return;
+      const enemies = Object.keys(N.wars).filter(t => N.wars[t] && Game.isPower(t) && !Game.P(t).out);
       if (!enemies.length || !U.chance(aggr)) return;
-      const targets = Geo.meta[src.id].neighbors.map(id => Game.c(id)).filter(c => c && enemies.includes(c.ctrl));
-      if (!targets.length) return;
-      const target = U.weightedPick(targets, t => (t.id === POWERS[t.ctrl].capital ? 0.5 : 1) + t.factories * 0.05);
+      const pairs = [];
+      for (const src of Game.lands(N.id)) {
+        if (src.radioactive) continue;
+        for (const n of Regions.nb(src.id)) { const t = Game.r(n); if (t && enemies.includes(t.ctrl)) pairs.push([src, t]); }
+      }
+      if (!pairs.length) return;
+      const [src, target] = U.weightedPick(pairs, ([, t]) => (t.id === Game.capitalRegion(t.ctrl) ? 0.5 : 1) + t.factories * 0.1 + (t.lostFrom === N.id ? 1.5 : 0));
       Game.enemyOffensive(src, target);
     });
   },
@@ -218,8 +217,8 @@ const AI = {
     const S = Game.S, key = 'lastEnemyNuke_' + X;
     if (S.day - (S.flags[key] ?? -999) < 120) return;   // не чаще раза в 120 дней
     S.flags[key] = S.day;
-    const cap = POWERS[X].capital;
-    const targets = Game.lands(X).filter(c => c.id !== cap && !c.radioactive);
+    const cap = Game.capitalRegion(X);
+    const targets = Game.lands(X).filter(r => r.id !== cap && !r.radioactive);
     const target = targets.length ? U.weightedPick(targets, c => 1 + c.factories) : null;
     if (!target) {
       Game.log('nuke', 'Перехват над столицей', `Система ПРО перехватила боеголовку. Удар нанесла держава: ${attacker.name}.`, cap, X);

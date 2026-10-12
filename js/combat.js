@@ -5,8 +5,9 @@
      сила = база × множители × бросок 2d6 (от ×0,80 до ×1,30);
      по соотношению сил считаются потери, падение контроля врага
      и расход организации наступающих.
-   Обороняется ИИ-страна (своим гарнизоном) или держава игрока —
-   тогда только армии, стоящие на этой земле (и резерв в столице).
+   Бой идёт за РЕГИОН. Обороняется гарнизон ИИ-государства (его армия
+   стягивается к фронту) или держава игрока — тогда только армии, стоящие
+   в этом регионе (и резерв, если это столичный регион).
    ============================================================ */
 
 const Combat = {
@@ -60,9 +61,10 @@ const Combat = {
     const Y = Game.powerOf(target);
     if (Y && Y !== Game.cur) return this.powerDefense(target, Y, divsOverride);
     const S = Game.S;
-    const divs = divsOverride != null ? divsOverride : target.divs;
+    const N = Game.ownerNation(target) || { faction: 'NEU', sab: 0 };
+    const divs = divsOverride != null ? divsOverride : Game.garrison(target);
     const divPart = divs * CFG.ENEMY_DIV_DEF;
-    const militia = target.factories * 0.8 + 4;
+    const militia = target.factories * 0.8 + 3;
     const base = divPart + militia;
     const lines = [
       { label: `${U.fmt(divs, 1)} див. × ${CFG.ENEMY_DIV_DEF}`, value: divPart },
@@ -74,10 +76,11 @@ const Combat = {
       lines.push({ label, mult: k });
       mult *= k;
     };
-    add('Доктрина: ' + FACTIONS[target.faction].name, FACTION_DEF[target.faction] || 1);
+    add('Доктрина: ' + (FACTIONS[N.faction] || FACTIONS.NEU).name, FACTION_DEF[N.faction] || 1);
     add(`Укрепления ур. ${target.fort}`, 1 + 0.15 * target.fort);
-    add('Саботаж', 1 - target.sab);
-    add('Мобилизация (напряжённость ≥ 50%)', S.tension >= 50 && target.faction !== 'NEU' ? 1.1 : 1);
+    add('Столичный регион', Game.isCapitalRegion(target) ? 1.3 : 1);
+    add('Саботаж', 1 - (N.sab || 0));
+    add('Мобилизация (напряжённость ≥ 50%)', S.tension >= 50 && N.faction !== 'NEU' ? 1.1 : 1);
     add('Радиоактивное заражение', target.radioactive ? 0.4 : 1);
     add(`Контроль территории ${Math.round(target.control)}%`, 0.6 + 0.4 * target.control / 100);
     add('Военно-технический прогресс', Game.aiTech(target));
@@ -93,9 +96,10 @@ const Combat = {
     const perDiv = land.divs > 0 ? land.def / land.divs : CFG.DIV.defense;   // оборона одной дивизии по шаблонам
     const org = Game.landOrg(target, Y);
     const core = target.core === Y;
-    const capital = target.id === POWERS[Y].capital;
+    const capital = target.id === Game.capitalRegion(Y);
+    const home = Game.c(POWERS[Y].capital) || { sab: 0 };
     const divPart = defenders * perDiv;
-    const militia = core ? target.factories * 1.5 + 10 : target.factories * 0.8 + 6;
+    const militia = core ? target.factories * 1.5 + 6 : target.factories * 0.8 + 4;
     const base = divPart + militia;
     const lines = [
       { label: `${U.fmt(defenders, 1)} див. × ${U.fmt(perDiv, 1)}`, value: divPart },
@@ -113,13 +117,13 @@ const Combat = {
     add('Оборонная доктрина', 1 + mY.defense);
     add('Родные стены', core ? 1.25 : 1);
     add('Стратегическая глубина столицы', capital ? 1.5 : 1);
-    add('Саботаж', 1 - target.sab);
+    add('Саботаж', 1 - (home.sab || 0));
     add('Радиоактивное заражение', target.radioactive ? 0.4 : 1);
     return { base, mult, total: base * mult, lines, divs: defenders, power: Y };
   },
 
   // Стойкость: как медленно падает контроль. Земля державы-игрока — ×2
-  resilienceOf(c) { return Game.isPower(c.ctrl) ? 2 : Game.resilience(c); },
+  resilienceOf(r) { return Game.resilience(r) * (Game.isPower(r.ctrl) ? 1.4 : 1); },
 
   /* --- Итог одного дня боя при данном соотношении сил --- */
   dayEffects(ratio, res, attDivs, defDivs, g) {
@@ -127,7 +131,8 @@ const Combat = {
     // Пехота держится дольше (организация шаблона выше), танки быстрее прорывают оборону
     const orgK = g ? (50 / Math.max(15, g.orgStat)) * (1 - 0.35 * g.armor) * (g.air ? CFG.AIRBORNE.orgLoss : 1) : 1;
     return {
-      ctrlDrop: ratio >= 1 ? (2 + 4 * Math.min(ratio - 1, 2)) / res : ratio >= 0.85 ? 0.3 / res : 0,
+      // Регион меньше страны: контроль падает быстрее
+      ctrlDrop: ratio >= 1 ? (5 + 9 * Math.min(ratio - 1, 2)) / res : ratio >= 0.85 ? 0.6 / res : 0,
       attLoss: attDivs * U.clamp(0.012 / ratio, 0.002, 0.03) * (1 - m.loss),
       defLoss: defDivs * (ratio >= 1 ? U.clamp(0.012 * ratio, 0.006, 0.04) : U.clamp(0.006 * ratio, 0.001, 0.008)),
       orgLoss: (2 + 2 / Math.max(ratio, 0.3)) * orgK
@@ -143,7 +148,7 @@ const Combat = {
     const st = Game.mixStats(mix);
     // Если хоть одна армия идёт через пролив — штраф действует на всех
     const tgt = targetId || (armies[0].order && armies[0].order.target) || '';
-    const from = armies.find(a => Geo.isSea(a.loc, tgt)) || armies[0];
+    const from = armies.find(a => Regions.isSea(a.loc, tgt)) || armies[0];
     // Десант: все армии группы высаживаются с воздуха
     const isAir = air != null ? air : armies.every(a => a.order && a.order.air);
     const airDays = isAir ? Math.max(...armies.map(a => (a.battle ? a.battle.days : 0))) : 0;
@@ -195,18 +200,18 @@ const Combat = {
 
   /* --- Наступление ИИ на землю державы игрока (мгновенный удар) --- */
   resolveEnemyOffensive(src, target) {
-    const Y = target.ctrl;
-    const committed = src.divs * 0.6;
-    const sea = Geo.isSea(src.id, target.id);          // высадка через пролив вдвое слабее
-    const aPow0 = committed * CFG.ENEMY_DIV_DEF * (FACTION_DEF[src.faction] || 1) * Game.diff.aiDef * Game.aiTech(src) *
-      (src.sab ? 1 - src.sab : 1) * (sea ? 0.5 : 1);
+    const Y = target.ctrl, N = Game.c(src.ctrl);
+    const committed = Game.garrison(src) * 0.7;       // наступают силы, стоящие в соседнем регионе
+    const sea = Regions.isSea(src.id, target.id);      // высадка через пролив вдвое слабее
+    const aPow0 = committed * CFG.ENEMY_DIV_DEF * (FACTION_DEF[N.faction] || 1) * Game.diff.aiDef * Game.aiTech(N) *
+      (N.sab ? 1 - N.sab : 1) * (sea ? 0.5 : 1);
     const def = this.powerDefense(target, Y);
     const defenders = def.divs;
     const aDice = U.roll2d6(), dDice = U.roll2d6();
     const aPow = aPow0 * this.rollMult(aDice[0] + aDice[1]);
     const dPow = def.total * this.rollMult(dDice[0] + dDice[1]);
     const ratio = aPow / Math.max(1, dPow);
-    const capital = target.id === POWERS[Y].capital;
+    const capital = target.id === Game.capitalRegion(Y);
 
     let controlDrop = 0, playerLost = 0, enemyLost = 0;
     if (ratio >= 1) {

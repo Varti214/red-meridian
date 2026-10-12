@@ -117,15 +117,15 @@ const Bot = {
   },
 
   /* ---------- Армии: фронт, оборона, наступление ---------- */
-  nb(id) { return (Geo.meta[id] || { neighbors: [] }).neighbors; },
-  // Насколько опасен участок: силы врага по соседству
+  nb(id) { return Regions.nb(id); },
+  // Насколько опасен регион: силы врага в соседних регионах
   threat(land) {
     let t = 0;
     for (const n of this.nb(land.id)) {
-      const c = Game.c(n);
-      if (!c || c.ctrl === Game.cur || c.inert) continue;
-      if (Game.atWar(c)) t += Math.max(2, Game.estDivs(c).mid) * 2;
-      else if (Game.isPower(c.ctrl)) t += 3;
+      const r = Game.r(n);
+      if (!r || r.ctrl === Game.cur) continue;
+      if (Game.atWar(r)) t += Math.max(2, Game.estDivs(r).mid) * 2;
+      else if (Game.isPower(r.ctrl)) t += 3;
     }
     return t;
   },
@@ -133,7 +133,7 @@ const Bot = {
     const X = Game.cur, P = Game.P();
     // Резерв собираем в армии
     if (P.divs >= 6) {
-      const small = P.armies.filter(a => a.divs < 24 && a.loc === Game.def().capital && a.order.type === 'hold').sort((a, b) => a.divs - b.divs)[0];
+      const small = P.armies.filter(a => a.divs < 24 && a.loc === Game.capitalRegion(X) && a.order.type === 'hold').sort((a, b) => a.divs - b.divs)[0];
       if (small) Game.reinforceArmy(small.id, Math.min(P.divs, 24 - Math.floor(small.divs)));
       else Game.createArmy(Math.min(P.divs, 24));
     }
@@ -146,11 +146,11 @@ const Bot = {
       for (const a of P.armies) {
         if (!Game.isAirborne(a) || a.order.type !== 'hold' || a.org < CFG.AIRBORNE.minOrg || (a.airCd || 0) > Game.S.day) continue;
         let best = null;
-        for (const c of Game.fronts()) {
-          if (Game.canAirdrop(a, c)) continue;
+        for (const c of Game.regionList()) {
+          if (c.ctrl === X || !Game.atWar(c) || Game.canAirdrop(a, c)) continue;
           const est = Combat.estimateArmies(c, [a], true);
           if (est.pWin < 0.65 || est.daysToTake > est.orgDays) continue;
-          const v = (c.factories + 1 + (c.id === (POWERS[Game.powerOf(c)] || {}).capital ? 6 : 0)) / Math.max(1, est.daysToTake);
+          const v = (c.factories + 1 + (Game.isCapitalRegion(c) ? 6 : 0)) / Math.max(1, est.daysToTake);
           if (!best || v > best.v) best = { c, v };
         }
         if (best) Game.orderAirborne(a.id, best.c.id);
@@ -164,16 +164,17 @@ const Bot = {
       for (const [loc, group] of Object.entries(byLoc)) {
         let best = null;
         for (const n of this.nb(loc)) {
-          const c = Game.c(n);
+          const c = Game.r(n);
           if (!c || !Game.atWar(c) || Game.canOrderAttack(group[0], c)) continue;
           const est = Combat.estimateArmies(c, group);
           const ok = est.pWin >= 0.55 && est.daysToTake <= est.orgDays + 2;
-          const value = (est.pWin * 2 + c.factories * 0.15 + (c.core === X ? 1 : 0) + (c.id === (POWERS[Game.powerOf(c)] || {}).capital ? 2 : 0)) / Math.max(1, est.daysToTake / 10);
+          const value = (est.pWin * 2 + c.factories * 0.15 + (c.core === X ? 1 : 0) + (Game.isCapitalRegion(c) ? 2 : 0)) / Math.max(1, est.daysToTake / 10);
           if (ok && (!best || value > best.value)) best = { c, value };
         }
         if (best) {
           // Слабая разведка — сначала уточняем силы врага
-          if (Game.intel(best.c) < 60 && P.pp > 30 && !Game.canSpy(best.c, SPY_OPS[0])) Game.spy(best.c.id, 'intel');
+          const owner = Game.ownerNation(best.c);
+          if (owner && Game.intel(owner) < 60 && P.pp > 30 && !Game.canSpy(owner, SPY_OPS[0])) Game.spy(owner.id, 'intel');
           group.forEach(a => Game.orderAttack(a.id, best.c.id));
         }
       }
@@ -184,7 +185,7 @@ const Bot = {
     const ours = id => P.armies.filter(a => a.loc === id || (a.order.type === 'move' && a.order.to === id)).reduce((s, a) => s + a.divs, 0);
     const free = P.armies.filter(a => a.order.type === 'hold' && !a.battle);
     for (const a of free) {
-      const here = Game.c(a.loc);
+      const here = Game.r(a.loc);
       const hereNeed = here ? this.threat(here) - ours(a.loc) + a.divs : -Infinity;
       if (here && this.threat(here) > 0 && hereNeed > a.divs * 0.5) continue;   // и здесь нужны
       let best = null;
@@ -224,7 +225,7 @@ const Bot = {
     // Затяжная безуспешная война с ИИ-страной — предлагаем мир
     for (const c of Game.fronts()) {
       if (Game.isPower(c.ctrl) || c.ctrl !== c.id) continue;
-      const lostLand = Game.list(t => t.lostFrom === X && t.ctrl === c.id).length;
+      const lostLand = Game.regionList().filter(t => t.lostFrom === X && t.ctrl === c.id).length;
       if ((lostLand || (c.warDays || 0) > 300) && S.day - m.lastPeace > 60 && !Game.canPeace(c) && Game.peaceChance(c) > 0.3) {
         m.lastPeace = S.day;
         Game.peace(c.id);
@@ -255,7 +256,8 @@ const Bot = {
     const busy = Game.fronts().filter(c => !Game.isPower(c.ctrl)).length;
     if (busy || S.tension > 65 || S.day - m.lastExpand < 120 || P.pp < 80) return;
     const mine = this.armyPower();
-    const nbIds = new Set(Game.lands().flatMap(c => this.nb(c.id)));
+    // Соседние государства — владельцы регионов, граничащих с нашими
+    const nbIds = new Set(Game.lands().flatMap(r => this.nb(r.id)).map(id => Game.r(id)).filter(r => r && r.ctrl !== X).map(r => r.ctrl));
     const cands = [...nbIds].map(id => Game.c(id)).filter(c => c && c.ctrl === c.id && !c.inert && !c.radioactive &&
       !Game.isPower(c.ctrl) && !Game.isAlly(c) && !c.cb[X] && Game.supplyFactor(c.id) >= 0.8);
     let best = null;

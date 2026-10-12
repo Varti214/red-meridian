@@ -202,7 +202,12 @@ const UI = {
       case 'influence': return run('influence', id);
       case 'integrate': return run('integrate', id);
       case 'spy': return run('spy', id, a.dataset.op);
-      case 'attack-plan': this.select(id, true); return;
+      case 'attack-plan': {
+        // Регион этой страны на нашем фронте (или её столица)
+        const fr = Game.frontRegions().find(r => (Game.ownerNation(r) || {}).id === id);
+        this.select(fr ? fr.id : id, true);
+        return;
+      }
       case 'army-select': Sound.play('click'); this.selectArmy(a.dataset.army); return;
       case 'army-attack': return run('orderAttack', a.dataset.army, id);
       case 'army-air': return run('orderAirborne', a.dataset.army, id);
@@ -285,9 +290,16 @@ const UI = {
   setDayProgress(f) { this.el.dayProg.style.width = (f * 100).toFixed(1) + '%'; },
 
   /* ---------------- ВЫБОР СТРАНЫ ---------------- */
+  // id страны → её столичный регион (для ссылок из журнала, новостей, списков)
+  regionFor(id) {
+    if (!id) return null;
+    if (Game.r(id)) return id;
+    const rid = Regions.capitalOf[id];
+    return rid && Game.r(rid) ? rid : null;
+  },
   select(id, focusMap) {
     if (id && this.selectedArmy) this.selectArmy(null);
-    this.selected = id && Game.c(id) ? id : null;
+    this.selected = this.regionFor(id);
     MapView.setSelected(this.selected);
     if (this.selected && focusMap) MapView.focus(this.selected);
     this.sig.country = null;
@@ -322,12 +334,12 @@ const UI = {
   // Приказ выбранной армии: своя земля — марш, соседняя вражеская — наступление
   issueOrder(targetId) {
     const a = Game.army(this.selectedArmy);
-    const c = Game.c(targetId);
+    const c = Game.r(targetId);
     if (!a || !c) return;
     if (c.ctrl === Game.me) {
       Act.call('orderMove', a.id, c.id).then(res => this.result(res));
     } else {
-      const adj = (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id);
+      const adj = Regions.adjacent(a.loc, c.id);
       if (!adj && Game.isAirborne(a) && Game.atWar(c)) {
         const whyAir = Game.canAirdrop(a, c);
         if (whyAir) { this.toast(whyAir, 'err'); Sound.play('error'); return; }
@@ -481,7 +493,7 @@ const UI = {
       panel.classList.add('open');
       return;
     }
-    const c = this.selected && Game.c(this.selected);
+    const c = this.selected && Game.r(this.selected);
     if (!c) {
       panel.classList.remove('open');
       this.sig.country = null;
@@ -498,15 +510,17 @@ const UI = {
     this.updateLive();
   },
 
-  countrySig(c) {
-    const P = this.P(), me = Game.me, est = Game.estDivs(c);
-    const reasons = [Game.canJustify(c), Game.canDeclare(c), Game.canPeace(c), Game.canInfluence(c), Game.canIntegrate(c),
-      Game.canNuke(c), Game.canFortify(c), Game.canDeploy(1, this.deployTplId()), Game.canDeploy(5, this.deployTplId()), this.deployTplId(),
-      Game.armies().filter(a => (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id)).map(a => [a.id, Math.round(a.divs), Math.round(a.org / 5), a.order.type]),
-      ...SPY_OPS.map(op => Game.canSpy(c, op))];
-    return JSON.stringify([c.id, c.faction, c.ctrl, Game.atWar(c), c.cb[me] === true, !!Game.justifying(c), !!c.influence, !!c.integrate, c.radioactive,
-      c.factories, c.fort, Math.round(c.control), Math.round(Game.intel(c) / 5), c.sab, c.sabDays > 0, est.lo, est.hi, Math.round(c.pop / 1e5),
-      reasons, P.divs, P.warheads, Game.S.tension >= 50, Math.round(Game.S.ruua || 0), Math.round(Game.S.uaw || 0), Math.round(Game.S.tension / 4), Game.mods.nukes, P.techs.length, this.polSig(c)]);
+  countrySig(r) {
+    const P = this.P(), me = Game.me, est = Game.estDivs(r);
+    const N = Game.ownerNation(r) || {};
+    const reasons = N.id ? [Game.canJustify(N), Game.canDeclare(N), Game.canPeace(N), Game.canInfluence(N), Game.canIntegrate(N),
+      ...SPY_OPS.map(op => Game.canSpy(N, op))] : [];
+    reasons.push(Game.canNuke(r), Game.canFortify(r), Game.canDeploy(1, this.deployTplId()), Game.canDeploy(5, this.deployTplId()), this.deployTplId(),
+      Game.armies().filter(a => Regions.adjacent(a.loc, r.id) || Game.isAirborne(a)).map(a => [a.id, Math.round(a.divs), Math.round(a.org / 5), a.order.type]));
+    return JSON.stringify([r.id, r.ctrl, N.faction, Game.atWar(r), N.cb && N.cb[me] === true, N.id && !!Game.justifying(N), !!N.influence, !!N.integrate, r.radioactive,
+      r.factories, r.fort, Math.round(r.control), N.id ? Math.round(Game.intel(N) / 5) : 0, N.sab, est.lo, est.hi, Math.round(r.pop / 1e5), N.id ? N.factories : 0,
+      reasons, P.divs, P.warheads, Game.S.tension >= 50, Math.round(Game.S.ruua || 0), Math.round(Game.S.uaw || 0), Math.round(Game.S.tension / 4), Game.mods.nukes, P.techs.length,
+      N.id ? this.polSig(r.ctrl === me ? Game.c(POWERS[me].capital) : N) : 0]);
   },
 
   badge(text, cls) { return `<span class="bdg bdg-${cls}">${U.esc(text)}</span>`; },
@@ -546,106 +560,122 @@ const UI = {
       <div class="meter meter-gold"><i data-live="prog" data-k="${k}" data-id="${c.id}" style="width:${(1 - v.daysLeft / v.total) * 100}%"></i></div></div>`;
   },
 
-  countryColor(c) {
-    if (c.radioactive) return COLORS.waste;
-    if (Game.atWar(c, Game.me)) return COLORS.front;
-    if (Game.isPower(c.ctrl)) return POWERS[c.ctrl].color;
-    return (FACTIONS[c.faction] || FACTIONS.NEU).color;
+  countryColor(r) {
+    if (r.radioactive) return COLORS.waste;
+    if (Game.atWar(r, Game.me)) return COLORS.front;
+    if (Game.isPower(r.ctrl)) return POWERS[r.ctrl].color;
+    const N = Game.ownerNation(r) || r;
+    return (FACTIONS[N.faction] || FACTIONS.NEU).color;
   },
 
-  // Подпись владельца: держава игрока, ИИ-блок или оккупант
-  ownerLabel(c) {
-    if (Game.isPower(c.ctrl)) {
-      const P = Game.P(c.ctrl);
-      return POWERS[c.ctrl].name + (P.player && c.ctrl !== Game.me ? ` (${P.player})` : '');
+  // Подпись владельца: держава игрока или ИИ-государство (с блоком)
+  ownerLabel(r) {
+    if (Game.isPower(r.ctrl)) {
+      const P = Game.P(r.ctrl);
+      return POWERS[r.ctrl].name + (P.player && r.ctrl !== Game.me ? ` (${P.player})` : '');
     }
-    return (FACTIONS[c.faction] || FACTIONS.NEU).name;
+    const N = Game.ownerNation(r) || r;
+    return N.id === (Game.c(r.cid) || {}).id ? (FACTIONS[N.faction] || FACTIONS.NEU).name : N.name;
   },
 
-  countryHTML(c) {
+  /* Панель региона: сам регион + государство, которое им владеет */
+  countryHTML(r) {
     const S = Game.S, m = Game.mods, me = Game.me, d = this.D(), P = this.P();
-    const color = this.countryColor(c);
-    const own = c.ctrl === me;
-    const Y = Game.powerOf(c);
+    const N = Game.ownerNation(r);              // государство-владелец (для державы — её страна)
+    const H = Game.c(r.cid);                    // страна, которой регион принадлежит исторически
+    const color = this.countryColor(r);
+    const own = r.ctrl === me;
+    const Y = Game.powerOf(r);
     const rival = Y && Y !== me;
-    const occupier = !own && !Y && c.ctrl !== c.id ? Game.c(c.ctrl) : null;
-    const est = Game.estDivs(c);
-    const war = Game.atWar(c);
+    const occupied = H && r.ctrl !== H.ctrl;
+    const est = Game.estDivs(r);
+    const war = Game.atWar(r);
 
     const badges = [];
-    if (own && c.id === d.capital) badges.push(this.badge('Столица', 'sov'));
-    if (own) badges.push(this.badge(c.core === me ? 'Исконная земля' : 'Присоединённая земля', 'sov'));
-    if (!own) badges.push(this.badge(this.ownerLabel(c), rival ? 'major' : 'fac'));
+    if (own && r.id === Game.capitalRegion(me)) badges.push(this.badge('Столица', 'sov'));
+    if (own) badges.push(this.badge(r.core === me ? 'Исконная земля' : 'Присоединённая земля', 'sov'));
+    if (!own) badges.push(this.badge(this.ownerLabel(r), rival ? 'major' : 'fac'));
     if (rival) badges.push(this.badge('Держава игрока', 'war'));
-    if (Game.isAlly(c)) badges.push(this.badge('Союзник', 'sov'));
-    if (c.major && !own && !rival) badges.push(this.badge('Великая держава', 'major'));
+    if (N && Game.isAlly(N)) badges.push(this.badge('Союзник', 'sov'));
+    if (N && N.major && !own && !rival) badges.push(this.badge('Великая держава', 'major'));
     if (war) badges.push(this.badge('Война', 'war'));
-    if (occupier) badges.push(this.badge('Оккупант: ' + occupier.name, 'war'));
-    if (c.cb[me] === true) badges.push(this.badge('Повод для войны', 'cb'));
-    if (c.radioactive) badges.push(this.badge('Радиация', 'rad'));
+    if (occupied && !own) badges.push(this.badge('Оккупирован: ' + Regions.ownerName(r.ctrl), 'war'));
+    if (N && N.cb[me] === true) badges.push(this.badge('Повод для войны', 'cb'));
+    if (r.radioactive) badges.push(this.badge('Радиация', 'rad'));
 
+    const sub = H && H.name !== r.name ? `<div class="cp-sub">${U.esc(H.name)}${Game.isCapitalRegion(r) ? ' · столичный регион' : ''}</div>` : '';
     let html = `<div class="cp-head" style="--fc:${color}">
-      <div class="cp-flag"><span>${U.esc(c.id)}</span></div>
-      <div class="cp-title"><div class="cp-name">${U.esc(c.name)}</div><div class="cp-badges">${badges.join('')}</div></div>
+      <div class="cp-flag"><span>${U.esc(r.cid)}</span></div>
+      <div class="cp-title"><div class="cp-name">${U.esc(r.name)}</div>${sub}<div class="cp-badges">${badges.join('')}</div></div>
       <button class="icon-btn" data-ui="close-panel" data-tip="Закрыть (Esc)"><svg><use href="#i-close"/></svg></button>
     </div><div class="cp-body">`;
 
-    if (c.inert) {
+    if (H && H.inert) {
       html += `<div class="cp-note">Антарктический договор: на континенте нет государств, армий и заводов. Здесь нечего завоёвывать — только лёд.</div></div>`;
       return html;
     }
 
-    /* --- Показатели --- */
+    /* --- Показатели региона --- */
     html += '<div class="cp-stats">';
-    html += this.stat('Заводы', U.fmt(c.factories));
-    html += this.stat('Население', U.fmtPop(c.pop));
+    html += this.stat('Заводы региона', U.fmt(r.factories));
+    html += this.stat('Население', U.fmtPop(r.pop));
     if (own) {
-      const mp = c.radioactive ? 0 : c.pop * CFG.MP_PER_POP * (c.core === me ? 1 : CFG.ANNEXED_MP) * (1 + m.mpMult);
+      const mp = r.radioactive ? 0 : r.pop * CFG.MP_PER_POP * (r.core === me ? 1 : CFG.ANNEXED_MP) * (1 + m.mpMult);
       html += this.stat('Призыв в день', U.fmt(mp, 2) + ' тыс.');
-      html += this.stat('Укрепления', this.pipBar(c.fort));
-      html += this.stat('Контроль', Math.round(c.control) + '%', this.meter(c.control, c.control < 60 ? 'meter-red' : 'meter-green'));
+      html += this.stat('Укрепления', this.pipBar(r.fort));
+      html += this.stat('Контроль', Math.round(r.control) + '%', this.meter(r.control, r.control < 60 ? 'meter-red' : 'meter-green'));
+      html += this.stat('Наши войска здесь', U.fmt(Game.landDefenders(r, me), 1));
     } else {
       const divTxt = est.exact ? U.fmt(est.mid, 1) : `~${est.lo}–${est.hi}`;
-      html += this.stat(rival ? 'Войска на участке' : 'Дивизии', divTxt, '',
-        rival ? 'Армия державы делится между всеми её враждебными границами.' : '');
-      const def = Combat.defenseBreakdown(c, est.mid).total;
+      html += this.stat('Войска в регионе', divTxt, '', rival ? 'Армии державы, стоящие в этом регионе.' : 'Армия ИИ-государства общая: у фронта она стоит гуще, в тылу — реже.');
+      const def = Combat.defenseBreakdown(r, est.mid).total;
       html += this.stat('Оборона', (est.exact ? '' : '~') + U.fmt(def, 0));
-      html += this.stat('Укрепления', this.pipBar(c.fort));
-      html += this.stat('Стойкость', '×' + U.fmt(rival ? 1.5 : Game.resilience(c), 1), '',
-        'Во сколько раз медленнее падает контроль противника при наших победах. Растёт с числом заводов: сверхдержавы держатся дольше. Ядерный удар обнуляет заводы — и стойкость.');
-      html += this.stat('Разведданные', Math.round(Game.intel(c)) + '%', this.meter(Game.intel(c), 'meter-violet'));
-      if (war || c.control < 100) html += this.stat('Контроль противника', Math.round(c.control) + '%', this.meter(c.control, 'meter-orange'));
-      if (c.sab > 0) html += this.stat('Саботаж', `−${Math.round(c.sab * 100)}%`, `<span class="st-note">${U.days(c.sabDays)}</span>`);
+      html += this.stat('Укрепления', this.pipBar(r.fort));
+      html += this.stat('Стойкость', '×' + U.fmt(Combat.resilienceOf(r), 1), '',
+        'Во сколько раз медленнее падает контроль при наших победах. Растёт с заводами региона; у столичного региона выше.');
+      if (N) html += this.stat('Разведданные', Math.round(Game.intel(N)) + '%', this.meter(Game.intel(N), 'meter-violet'));
+      if (war || r.control < 100) html += this.stat('Контроль противника', Math.round(r.control) + '%', this.meter(r.control, 'meter-orange'));
+      if (N && N.sab > 0) html += this.stat('Саботаж', `−${Math.round(N.sab * 100)}%`, `<span class="st-note">${U.days(N.sabDays)}</span>`);
     }
     html += '</div>';
 
-    /* --- Пояснение --- */
-    if (own) {
-      if (c.radioactive) html += `<div class="cp-note warn">Радиоактивная пустошь. Заводы и призыв здесь невозможны навсегда.</div>`;
-      else if (Game.list(t => Game.atWar(t) && Geo.meta[t.id].neighbors.includes(c.id)).length)
-        html += `<div class="cp-note warn">Прифронтовая территория: враг может перейти в наступление. Укрепления повышают оборону на 15% за уровень.</div>`;
-    } else if (Game.isAlly(c)) {
-      html += `<div class="cp-note">Союзник по блоку «${U.esc(d.allyName)}»: +0,1 ПВ в день. Можно мирно интегрировать в состав державы.</div>`;
-    } else {
-      const sup = Game.supplyFactor(c.id);
-      html += `<div class="cp-note ${sup < 1 ? 'warn' : ''}">${sup === 1
-        ? 'Общая граница с нами — полное снабжение наступающих войск.'
-        : sup === 0.8
-          ? 'Граница только через пролив: форсирование водной преграды, −20% к атаке.'
-          : 'Нет общей границы: наступление морским и воздушным десантом, −45% к атаке.'}</div>`;
-      if (rival) html += `<div class="cp-note">За эту державу играет человек. Его армия защищает все границы сразу — чем больше у него фронтов, тем слабее каждый участок.</div>`;
+    /* --- Государство-владелец --- */
+    if (N && !own) {
+      const total = Game.estDivs(N);
+      const held = Game.lands(Game.isPower(r.ctrl) ? r.ctrl : N.id).length;
+      html += `<div class="cp-nation"><b>${U.esc(Y ? POWERS[Y].name : N.name)}</b><span>регионов: ${held} · заводов: ${Game.playerFactories(Y || N.id)} · армия: ${total.exact ? U.fmt(total.mid, 0) : '~' + total.lo + '–' + total.hi} див.</span></div>`;
     }
 
-    if (Game.ruuaSides && Game.ruuaSides() && ['RUS', 'UKR'].includes(c.id)) {
+    /* --- Пояснение --- */
+    if (own) {
+      if (r.radioactive) html += `<div class="cp-note warn">Радиоактивная пустошь. Заводы и призыв здесь невозможны навсегда.</div>`;
+      else if (Regions.nb(r.id).some(n => Game.atWar(Game.r(n))))
+        html += `<div class="cp-note warn">Прифронтовой регион: враг может перейти в наступление. Укрепления повышают оборону на 15% за уровень.</div>`;
+    } else if (N && Game.isAlly(N)) {
+      html += `<div class="cp-note">Союзник по блоку «${U.esc(d.allyName)}»: +0,1 ПВ в день. Можно мирно интегрировать в состав державы.</div>`;
+    } else {
+      const sup = Game.supplyFactor(r.id);
+      html += `<div class="cp-note ${sup < 1 ? 'warn' : ''}">${sup === 1
+        ? 'Граничит с нашими регионами — полное снабжение наступающих войск.'
+        : sup === 0.8
+          ? 'Граница только через пролив: форсирование водной преграды, −20% к атаке.'
+          : 'Не граничит с нашими регионами: наступать можно только воздушным десантом.'}</div>`;
+      if (rival) html += `<div class="cp-note">За эту державу играет человек. Регион защищают только армии, стоящие в нём (и резерв, если это столица).</div>`;
+    }
+
+    if (Game.ruuaSides && Game.ruuaSides() && ['RUS', 'UKR'].includes(r.cid)) {
       const v = Math.round(S.ruua || 0);
       const w = Math.round(S.uaw || 0);
       html += `<div class="cp-stats">${this.stat('Россия — Украина', Game.ruuaWar() ? 'война' : v + '%', this.meter(v, v >= 75 ? 'meter-red' : 'meter-orange'), 'Напряжённость между Россией и Украиной. На 100% начинается война.')}
-        ${c.id === 'UKR' ? this.stat('Украина — Запад', w + '%', this.meter(w, 'meter-violet'), 'Доверие Запада к Киеву. От него зависят санкции против России и поставки оружия, если начнётся война.') : ''}</div>`;
+        ${r.cid === 'UKR' ? this.stat('Украина — Запад', w + '%', this.meter(w, 'meter-violet'), 'Доверие Запада к Киеву. От него зависят санкции против России и поставки оружия, если начнётся война.') : ''}</div>`;
     }
-    html += this.politicsHTML(c);
-    html += this.projectBlock(c, 'justify', 'Обоснование войны');
-    html += this.projectBlock(c, 'influence', 'Распространение влияния');
-    html += this.projectBlock(c, 'integrate', 'Интеграция в состав державы');
+    const polN = own ? Game.c(POWERS[me].capital) : N;
+    if (polN) html += this.politicsHTML(polN);
+    if (N) {
+      html += this.projectBlock(N, 'justify', 'Обоснование войны');
+      html += this.projectBlock(N, 'influence', 'Распространение влияния');
+      html += this.projectBlock(N, 'integrate', 'Интеграция в состав державы');
+    }
 
     /* --- Действия --- */
     if (own) {
@@ -656,18 +686,19 @@ const UI = {
         sub: `${U.fmtMP(dc.mp)} призывников · ${U.days(Game.trainDays(tplId))} · шаблон меняется внизу`, cost: this.costTag(dc.pp) });
       html += this.actBtn({ act: 'deploy', label: 'Сформировать 5 дивизий', icon: 'i-div', data: 'data-n="5"', why: Game.canDeploy(5, tplId),
         sub: `${U.fmtMP(dc5.mp)} призывников`, cost: this.costTag(dc5.pp) });
-      html += this.actBtn({ act: 'fortify', id: c.id, label: 'Возвести укрепрайон', icon: 'i-shield', why: Game.canFortify(c),
+      html += this.actBtn({ act: 'fortify', id: r.id, label: 'Возвести укрепрайон в регионе', icon: 'i-shield', why: Game.canFortify(r),
         sub: '+15% к обороне региона', cost: this.costTag(CFG.FORTIFY_PP) });
       html += '</div>';
-    } else if (Game.isAlly(c)) {
+    } else if (N && Game.isAlly(N)) {
       html += `<div class="cp-sec"><div class="cp-sec-title">Дипломатия</div>`;
-      html += this.actBtn({ act: 'integrate', id: c.id, label: 'Интегрировать в состав державы', icon: 'i-flag', why: Game.canIntegrate(c),
-        sub: `${U.days(Game.integrateDays(c))} · напряжённость +3%`, cost: this.costTag(CFG.INTEGRATE.pp) });
+      html += this.actBtn({ act: 'integrate', id: N.id, label: 'Интегрировать в состав державы', icon: 'i-flag', why: Game.canIntegrate(N),
+        sub: `${U.days(Game.integrateDays(N))} · напряжённость +3%`, cost: this.costTag(CFG.INTEGRATE.pp) });
       html += '</div>';
-    } else {
-      html += `<div class="cp-sec"><div class="cp-sec-title">Дипломатия</div>`;
+    } else if (N) {
+      const c = N;
+      html += `<div class="cp-sec"><div class="cp-sec-title">Дипломатия: ${U.esc(Y ? POWERS[Y].name : c.name)}</div>`;
       if (war) {
-        html += this.actBtn({ act: 'peace', id: c.id, label: rival ? 'Предложить белый мир' : 'Предложить белый мир', icon: 'i-flag', why: Game.canPeace(c),
+        html += this.actBtn({ act: 'peace', id: c.id, label: 'Предложить мир', icon: 'i-flag', why: Game.canPeace(c),
           sub: rival ? 'Решение примет второй игрок' : `Шанс согласия ${U.pct(Game.peaceChance(c))}`, cost: this.costTag(CFG.PEACE_PP),
           tip: 'Мир на условиях статус-кво.' });
       } else if (c.cb[me] === true) {
@@ -694,13 +725,13 @@ const UI = {
       }
       html += '</div>';
 
-      html += `<div class="cp-sec"><div class="cp-sec-title">Военные операции</div>`;
-      html += this.attackOptionsHTML(c);
+      html += `<div class="cp-sec"><div class="cp-sec-title">Наступление на регион</div>`;
+      html += this.attackOptionsHTML(r);
       html += '</div>';
 
       html += `<div class="cp-sec cp-sec-nuke"><div class="cp-sec-title">Стратегическое оружие</div>`;
       if (m.nukes) {
-        html += this.actBtn({ act: 'nuke-plan', id: c.id, label: 'Ядерный удар', icon: 'i-nuke', cls: 'act-nuke', why: Game.canNuke(c),
+        html += this.actBtn({ act: 'nuke-plan', id: r.id, label: 'Ядерный удар по региону', icon: 'i-nuke', cls: 'act-nuke', why: Game.canNuke(r),
           sub: `Боеголовок: ${P.warheads}` });
       } else {
         const done = TECHS.filter(t => t.branch === 'nuclear' && P.techs.includes(t.id) && t.tier <= 4).length;
@@ -724,7 +755,7 @@ const UI = {
     const sig = JSON.stringify([me, P.divs, this.selectedArmy, P.armies.map(a => [a.id, Math.round(a.divs), Math.round(a.org / 4), a.order.type, a.loc, a.order.target]),
       P.training.map(t => t.count + ':' + t.total + ':' + t.daysLeft), this.deployTplId(), JSON.stringify(P.templates), JSON.stringify(P.rmix),
       Game.canDeploy(1, this.deployTplId()), Game.canDeploy(5, this.deployTplId()),
-      fronts.map(c => { const e = Game.estDivs(c); return [c.id, e.lo, e.hi, Math.round(c.control), c.ctrl]; }),
+      fronts.map(c => { const e = Game.estDivs(c); return [c.id, e.lo, e.hi, Math.round(c.control), c.ctrl, Game.regionsOf(c.id).filter(r => r.ctrl === me).length]; }),
       projects.map(c => [c.id, c.cb[me] === true, !!c.influence, !!c.integrate]),
       threatened.map(c => [c.id, Math.round(c.control / 5)])]);
     if (sig === this.sig.dock) return;
@@ -756,9 +787,10 @@ const UI = {
     let f = `<div class="box-title"><svg><use href="#i-swords"/></svg>Армии и фронты<span class="box-count">${fronts.length ? fronts.length + ' ' + U.plural(fronts.length, 'фронт', 'фронта', 'фронтов') : ''}</span></div><div class="fc-list">`;
     const cards = [];
     for (const ar of P.armies) {
-      const loc = Game.c(ar.loc);
-      const st = ar.order.type === 'attack' ? 'Наступает: ' + Game.c(ar.order.target).name
-        : ar.order.type === 'move' ? 'На марше: ' + Game.c(ar.order.to || ar.order.path[ar.order.path.length - 1]).name
+      const loc = Game.r(ar.loc) || { name: '?' };
+      const nm = id => (Game.r(id) || { name: '?' }).name;
+      const st = ar.order.type === 'attack' ? (ar.order.air ? 'Десант: ' : 'Наступает: ') + nm(ar.order.target)
+        : ar.order.type === 'move' ? 'На марше: ' + nm(ar.order.to || ar.order.path[ar.order.path.length - 1])
         : 'Оборона: ' + loc.name;
       cards.push(`<div class="fc fc-army ${ar.id === this.selectedArmy ? 'sel' : ''} st-${ar.order.type}" data-act="army-select" data-army="${ar.id}">
         <div class="fc-top"><svg class="fc-nato" viewBox="0 0 16 11"><rect x=".5" y=".5" width="15" height="10"/><path d="M.5 .5l15 10M15.5 .5l-15 10"/></svg><span class="fc-name">${U.esc(ar.name)}</span></div>
@@ -771,12 +803,13 @@ const UI = {
     for (const c of fronts) {
       const e = Game.estDivs(c);
       const Y = Game.powerOf(c);
-      const tag = Y ? POWERS[Y].name : (c.ctrl !== c.id ? 'оккупирована' : '');
-      cards.push(`<div class="fc fc-war" data-act="select" data-id="${c.id}">
-        <div class="fc-top"><span class="fc-name">${U.esc(c.name)}</span>${tag ? `<span class="fc-tag">${U.esc(tag)}</span>` : ''}</div>
-        <div class="fc-row"><span>Противник</span><b>${e.exact ? U.fmt(e.mid, 1) : '~' + e.lo + '–' + e.hi} див.</b></div>
-        <div class="meter meter-orange"><i style="width:${c.control}%"></i></div>
-        <div class="fc-row fc-small"><span>Контроль противника</span><b>${Math.round(c.control)}%</b></div>
+      const tag = Y ? POWERS[Y].name : '';
+      const all = Game.regionsOf(c.id).length, taken = Game.regionsOf(c.id).filter(r => r.ctrl === me).length;
+      cards.push(`<div class="fc fc-war" data-act="attack-plan" data-id="${c.id}">
+        <div class="fc-top"><span class="fc-name">${U.esc(Y ? POWERS[Y].name : c.name)}</span>${tag ? `<span class="fc-tag">держава</span>` : ''}</div>
+        <div class="fc-row"><span>Армия противника</span><b>${e.exact ? U.fmt(e.mid, 1) : '~' + e.lo + '–' + e.hi} див.</b></div>
+        <div class="meter meter-orange"><i style="width:${all ? 100 * taken / all : 0}%"></i></div>
+        <div class="fc-row fc-small"><span>Занято регионов</span><b>${taken} из ${all}</b></div>
         <button class="btn btn-xs btn-red" data-act="attack-plan" data-id="${c.id}"><svg><use href="#i-swords"/></svg>Наступать</button>
       </div>`);
     }
@@ -897,24 +930,22 @@ const UI = {
   },
 
   countryTip(id) {
-    const c = Game.c(id);
-    if (!c || !Game.S) return '';
-    const own = c.ctrl === Game.me;
-    const est = Game.estDivs(c);
-    const war = Game.atWar(c);
-    const status = c.radioactive ? 'радиоактивная пустошь' : war ? 'активный фронт' : c.cb[Game.me] === true ? 'повод для войны получен' : Game.justifying(c) ? 'идёт обоснование войны' : '';
-    let rows = `<span>Заводы</span><b>${U.fmt(c.factories)}</b>`;
-    if (!own && !c.inert) rows += `<span>${Game.isPower(c.ctrl) ? 'Войска на участке' : 'Дивизии'}</span><b>${est.exact ? U.fmt(est.mid, 1) : '~' + est.lo + '–' + est.hi}</b>`;
-    if (c.fort) rows += `<span>Укрепления</span><b>${c.fort}</b>`;
-    if (war || c.control < 100) rows += `<span>Контроль</span><b>${Math.round(c.control)}%</b>`;
-    const rg = MapView.hoverRegion && MapView.hoverRegion.cid === id ? MapView.hoverRegion : null;
-    if (rg && (Regions.byCountry[id] || []).length > 1) {
-      const own = Regions.ownerOf(rg);
-      rows = `<span>Регион</span><b>${U.esc(rg.name)}</b><span>Под контролем</span><b>${U.esc(Regions.ownerName(own))}</b>` + rows;
-    }
-    return `<div class="tt-title"><i style="background:${this.countryColor(c)}"></i>${U.esc(c.name)}</div>
-      <div class="tt-sub">${own ? (c.core === Game.me ? 'Наша исконная земля' : 'Присоединённая территория') : U.esc(this.ownerLabel(c))}${status ? ' · ' + status : ''}</div>
-      <div class="tt-grid">${rows}</div><div class="tt-hint">ЛКМ — открыть панель страны</div>`;
+    const r = Game.r(id);
+    if (!r || !Game.S) return '';
+    const H = Game.c(r.cid), N = Game.ownerNation(r);
+    const own = r.ctrl === Game.me;
+    const est = Game.estDivs(r);
+    const war = Game.atWar(r);
+    const status = r.radioactive ? 'радиоактивная пустошь' : war ? 'активный фронт' : N && N.cb[Game.me] === true ? 'повод для войны получен' : N && Game.justifying(N) ? 'идёт обоснование войны' : '';
+    let rows = `<span>Страна</span><b>${U.esc(H ? H.name : r.cid)}</b>`;
+    rows += `<span>Владелец</span><b>${U.esc(own ? 'мы' : Regions.ownerName(r.ctrl))}</b>`;
+    rows += `<span>Заводы</span><b>${U.fmt(r.factories)}</b>`;
+    if (!own && !(H && H.inert)) rows += `<span>Войска в регионе</span><b>${est.exact ? U.fmt(est.mid, 1) : '~' + est.lo + '–' + est.hi}</b>`;
+    if (r.fort) rows += `<span>Укрепления</span><b>${r.fort}</b>`;
+    if (war || r.control < 100) rows += `<span>Контроль</span><b>${Math.round(r.control)}%</b>`;
+    return `<div class="tt-title"><i style="background:${this.countryColor(r)}"></i>${U.esc(r.name)}</div>
+      <div class="tt-sub">${own ? (r.core === Game.me ? 'Наш исконный регион' : 'Наш присоединённый регион') : U.esc(this.ownerLabel(r))}${status ? ' · ' + status : ''}</div>
+      <div class="tt-grid">${rows}</div><div class="tt-hint">ЛКМ — открыть панель региона</div>`;
   },
 
   tipFns: {
@@ -1256,13 +1287,13 @@ const UI = {
 
   /* ---------------- ПАНЕЛЬ АРМИИ ---------------- */
   armyTargetsSig(a) {
-    return (Geo.meta[a.loc] || { neighbors: [] }).neighbors.filter(n => Game.atWar(Game.c(n))).map(n => n + Math.round(Game.c(n).control));
+    return Regions.nb(a.loc).filter(n => Game.atWar(Game.r(n))).map(n => n + Math.round(Game.r(n).control));
   },
 
   orderText(a) {
-    if (a.order.type === 'attack') return (a.order.air ? 'Десант: ' : 'Наступление: ') + Game.c(a.order.target).name;
+    if (a.order.type === 'attack') return (a.order.air ? 'Десант: ' : 'Наступление: ') + (Game.r(a.order.target) || { name: '?' }).name;
     if (a.order.type === 'move') {
-      const to = Game.c(a.order.to || a.order.path[a.order.path.length - 1]);
+      const to = Game.r(a.order.to || a.order.path[a.order.path.length - 1]) || { name: '?' };
       return `Марш: ${to.name} (${U.days(a.order.left + a.order.path.slice(1).length * CFG.ARMY.stepDays)})`;
     }
     return 'Оборона позиций';
@@ -1276,8 +1307,8 @@ const UI = {
   },
 
   armyHTML(a) {
-    const d = this.D(), P = this.P(), loc = Game.c(a.loc);
-    const targets = (Geo.meta[a.loc] || { neighbors: [] }).neighbors.map(n => Game.c(n)).filter(c => c && Game.atWar(c));
+    const d = this.D(), P = this.P(), loc = Game.r(a.loc) || { name: '?' };
+    const targets = Regions.nb(a.loc).map(n => Game.r(n)).filter(c => c && Game.atWar(c));
     let html = `<div class="cp-head" style="--fc:${d.color}">
       <div class="cp-flag army-flag"><svg viewBox="0 0 16 11"><rect x=".5" y=".5" width="15" height="10"/><path d="M.5 .5l15 10M15.5 .5l-15 10"/></svg></div>
       <div class="cp-title"><div class="cp-name">${U.esc(a.name)}</div><div class="cp-badges">${this.badge('Командующий: ' + a.general, 'fac')}${this.badge(this.orderText(a), a.order.type === 'attack' ? 'war' : 'sov')}</div></div>
@@ -1294,7 +1325,7 @@ const UI = {
       <div class="army-mix">${Object.entries(a.mix).filter(([, n]) => n >= 0.5).map(([id, n]) => { const t = Game.tpl(id); return `<span class="mix-chip">${U.esc(t ? t.name : '?')} <b>×${Math.round(n)}</b></span>`; }).join('')}</div>
       <div class="cp-note army-hint">Кликните по <b>своей</b> земле — армия пойдёт туда. По <b>соседней вражеской</b> — начнёт наступление. Правый клик тоже работает.</div>`;
     if (a.battle && a.order.type === 'attack') {
-      const c = Game.c(a.battle.target), last = a.battle.last;
+      const c = Game.r(a.battle.target), last = a.battle.last;
       html += `<div class="cp-sec"><div class="cp-sec-title">Идёт сражение</div>
         <div class="battle-box">
           <div class="fc-row"><span>Направление</span><b>${U.esc(c.name)}</b></div>
@@ -1320,7 +1351,7 @@ const UI = {
       html += `<div class="cp-note">Рядом нет врага. Отведите армию к линии фронта: кликните по своей приграничной земле.</div>`;
     }
     if (Game.isAirborne(a)) {
-      const air = Game.fronts().filter(c => !(Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id))
+      const air = Game.regionList().filter(c => c.ctrl !== Game.me && Game.atWar(c) && !Regions.adjacent(a.loc, c.id))
         .map(c => ({ c, d: Game.airDistance(c) })).filter(x => x.d <= CFG.AIRBORNE.range).sort((x, y) => x.d - y.d).slice(0, 8);
       html += `<div class="cp-sec"><div class="cp-sec-title">Воздушный десант</div>
         <div class="cp-note">Высадка на любую вражескую землю в радиусе ${CFG.AIRBORNE.range} км — даже без общей границы. Первые дни удар сильнее (внезапность), но организация тает быстрее, а не взяв цель, десант потеряет ${Math.round(CFG.AIRBORNE.cutOff * 100)}% дивизий.</div>`;
@@ -1345,7 +1376,7 @@ const UI = {
   // В панели вражеской страны: наши армии рядом и прогноз наступления
   attackOptionsHTML(c) {
     if (!Game.atWar(c)) return '<div class="cp-note">Нет состояния войны. Обоснуйте и объявите войну, затем подведите армию к границе.</div>';
-    const near = Game.armies().filter(a => (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id));
+    const near = Game.armies().filter(a => Regions.adjacent(a.loc, c.id));
     const paras = Game.armies().filter(a => Game.isAirborne(a) && !near.includes(a) && Game.airDistance(c) <= CFG.AIRBORNE.range);
     let html = '';
     for (const a of paras) {
@@ -1445,25 +1476,26 @@ const UI = {
   onEnemyAttack(r) {
     if (r.power !== Game.me) return;
     if (r.srcId) MapView.fxEnemyAttack(r.srcId, r.targetId, r.ratio >= 1);
-    const c = Game.c(r.targetId);
+    const c = Game.r(r.targetId);
     if (r.ratio >= 1 && r.controlDrop >= 20 && c) this.toast(`Противник прорывается: ${c.name} (контроль ${Math.round(r.control)}%)`, 'warn');
   },
 
   /* ---------------- ЯДЕРНЫЙ УДАР ---------------- */
   openNukePlanner(id) {
-    const c = Game.c(id);
+    const c = Game.r(id);
     const why = Game.canNuke(c);
     if (why) return this.result(Game.fail(why));
     const m = Game.mods, P = this.P();
     const usa = Game.c('USA');
     const Y = Game.powerOf(c);
-    const risk = usa && usa.ctrl === 'USA' && !usa.radioactive && c.id !== 'USA' && (c.faction === 'WEST' || usa.wars[Game.me]);
+    const N = Game.ownerNation(c) || {};
+    const risk = usa && usa.ctrl === 'USA' && !usa.radioactive && c.cid !== 'USA' && (N.faction === 'WEST' || usa.wars[Game.me]);
     const html = `<div class="nk-head"><svg class="nk-tre"><use href="#i-nuke"/></svg><div><div class="mh-k">Стратегический ядерный удар</div><h2>${U.esc(c.name)}</h2></div></div>
       <ul class="consequences">
         <li class="neg">Все заводы цели уничтожены навсегда: ${c.factories} → 0.</li>
-        <li class="neg">${Y ? 'Войска противника на этом участке' : 'Дивизии противника'}: −${m.thermo ? 100 : 85}%${m.thermo ? ', соседи теряют 25%' : ''}.</li>
+        <li class="neg">${Y ? 'Войска противника в регионе' : 'Гарнизон региона'}: −${m.thermo ? 100 : 85}%${m.thermo ? ', соседи теряют 25%' : ''}.</li>
         <li class="neg">Регион навсегда станет радиоактивной пустошью.</li>
-        <li class="neg">Мировая напряжённость +${c.faction === 'NEU' ? 35 : CFG.NUKE_TENSION}%.${!Game.atWar(c) ? ' Удар равносилен объявлению войны.' : ''}</li>
+        <li class="neg">Мировая напряжённость +${N.faction === 'NEU' ? 35 : CFG.NUKE_TENSION}%.${!Game.atWar(c) ? ' Удар равносилен объявлению войны.' : ''}</li>
         ${Y ? `<li class="neg">${U.esc(POWERS[Y].name)} — держава живого игрока. Если у неё есть ракеты, она может ответить тем же.</li>` : ''}
         ${risk ? '<li class="neg">Высокий риск (60%) ответного ядерного удара США по нашей территории.</li>' : ''}
         <li class="${Game.wastelands() + 1 >= CFG.NUCLEAR_WINTER ? 'neg' : ''}">Пустошей в мире: ${Game.wastelands()} → ${Game.wastelands() + 1} из ${CFG.NUCLEAR_WINTER}. При ${CFG.NUCLEAR_WINTER} наступит ядерная зима — конец игры для всех.</li>
@@ -1501,14 +1533,14 @@ const UI = {
     this.fxBusyUntil = performance.now() + (mine ? 4600 : 3600);
     MapView.fxNuke(r.targetId, POWERS[r.by].capitalPos);
     Sound.play('launch');
-    setTimeout(() => { this.flash(mine || Game.c(r.targetId).ctrl === Game.me); Sound.play('nuke'); }, 1700);
+    setTimeout(() => { this.flash(mine || (Game.r(r.targetId) || {}).ctrl === Game.me); Sound.play('nuke'); }, 1700);
     if (mine) setTimeout(() => this.showNukeReport(r), 4200);
     else this.toast(`ЯДЕРНЫЙ УДАР: ${POWERS[r.by].name} → ${r.name}`, 'warn');
   },
 
   onEnemyNuke(r) {
     this.fxBusyUntil = performance.now() + 3600;
-    const from = Geo.meta[r.from] ? Geo.meta[r.from].centroid : { lat: 40, lng: -100 };
+    const from = Regions.center(Regions.capitalOf[r.from] || r.from) || { lat: 40, lng: -100 };
     MapView.fxNuke(r.target, from);
     Sound.play('launch');
     setTimeout(() => { this.flash(r.power === Game.me); Sound.play('nuke'); }, 1700);

@@ -394,7 +394,7 @@ const EVENTS = [
         { label: 'Поддержать Минск', tip: '−20 ПВ · государственники в Беларуси +12%', fx: () => { Game.addPP(-20); EV.pop('BLR', 'auth', 12); EV.help('BLR'); } },
         { label: 'Ставка на оппозицию', tip: 'Либералы в Беларуси +10% · 40%: власть меняется', fx: () => { EV.pop('BLR', 'lib', 10); EV.help('BLR'); if (U.chance(0.4)) EV.gov('BLR', 'lib', 'Светлана Тихановская', 'protest'); } },
         { label: 'Интеграция в Союзное государство', tip: '−40 ПВ · если Беларусь в ОДКБ — она входит в состав России',
-          fx: () => { const c = Game.c('BLR'); Game.addPP(-40); if (c && Game.isAlly(c)) { Game.transferLand(c, Game.cur, { peaceful: true }); Game.news('Союзное государство', 'Беларусь входит в состав России.', 'BLR'); } } }
+          fx: () => { const c = Game.c('BLR'); Game.addPP(-40); if (c && Game.isAlly(c)) { Game.annexNation(c, Game.cur, { peaceful: true }); Game.news('Союзное государство', 'Беларусь входит в состав России.', 'BLR'); } } }
       ],
       WST: [
         { label: 'Санкции против Минска', tip: 'Либералы в Беларуси +6% · напряжённость +1', fx: () => { EV.pop('BLR', 'lib', 6); EV.help('BLR'); Game.addTension(1); } },

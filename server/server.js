@@ -24,7 +24,7 @@ const ROOM_TTL_MS = 20 * 60 * 1000;   // комната без игроков ж
 const FLUSH_MS = 250;                  // как часто рассылать изменения
 
 /* ---------------- Игровое ядро: один раз компилируем, запускаем в каждой комнате ---------------- */
-const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/combat.js', 'js/ai.js', 'js/game.js',
+const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/regions.js', 'js/combat.js', 'js/ai.js', 'js/game.js', 'js/lands.js',
   'js/parties.js', 'js/politics.js', 'js/events.js', 'js/ruua.js', 'js/autopilot.js'];
 const ENGINE_SRC = ENGINE_FILES.map(f => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n;\n')
   + '\n;({ Game, Geo, Bus, POWERS, DIFFICULTY });';
@@ -121,7 +121,6 @@ function wireCountry(c) {
   const o = Object.assign({}, c);
   o.divs = round1(c.divs);
   o.baseDivs = round1(c.baseDivs);
-  o.control = round1(c.control);
   o.noise = Math.round(c.noise * 100) / 100;
   o.pop = Math.round(c.pop);
   o.intel = {};
@@ -131,6 +130,14 @@ function wireCountry(c) {
     for (const [k, v] of Object.entries(c.pol.pop)) o.pol.pop[k] = round1(v);
     for (const [k, v] of Object.entries(c.pol.base)) o.pol.base[k] = round1(v);
   }
+  return o;
+}
+
+// Регион: владелец, заводы, контроль — всё, что меняется в бою
+function wireRegion(r) {
+  const o = Object.assign({}, r);
+  o.control = round1(r.control);
+  o.pop = Math.round(r.pop);
   return o;
 }
 
@@ -145,7 +152,9 @@ function fullState(room, power) {
   const S = room.api.Game.S;
   const countries = {};
   for (const [id, c] of Object.entries(S.countries)) countries[id] = wireCountry(c);
-  return Object.assign({}, S, { countries, log: S.log.filter(e => !e.to || e.to === power), me: power });
+  const regions = {};
+  for (const [id, r] of Object.entries(S.regions)) regions[id] = wireRegion(r);
+  return Object.assign({}, S, { countries, regions, log: S.log.filter(e => !e.to || e.to === power), me: power });
 }
 
 // Отправить всем изменения с прошлого раза, затем накопившиеся сообщения (бой, ядерный удар…)
@@ -160,14 +169,22 @@ function flush(room) {
     const j = JSON.stringify(w);
     if (room.lastWire[id] !== j) { room.lastWire[id] = j; changed[id] = w; any = true; }
   }
+  const rch = {};
+  let anyR = false;
+  for (const [id, r] of Object.entries(S.regions)) {
+    const w = wireRegion(r);
+    const j = JSON.stringify(w);
+    if (room.lastWireR[id] !== j) { room.lastWireR[id] = j; rch[id] = w; anyR = true; }
+  }
   const top = JSON.stringify(topState(S));
   const countries = any ? JSON.stringify(changed) : '{}';
+  const regions = anyR ? JSON.stringify(rch) : '{}';
   const logs = room.newLogs;
   room.newLogs = [];
   for (const p of room.players) {
     if (!p.ws) continue;
     const mine = logs.filter(e => !e.to || e.to === p.power);
-    sendWs(p.ws, '{"type":"patch","top":' + top + ',"countries":' + countries + ',"logs":' + JSON.stringify(mine) + '}');
+    sendWs(p.ws, '{"type":"patch","top":' + top + ',"countries":' + countries + ',"regions":' + regions + ',"logs":' + JSON.stringify(mine) + '}');
   }
   const out = room.outbox;
   room.outbox = [];
@@ -182,6 +199,7 @@ async function startGame(room) {
   const api = await createEngine();
   room.api = api;
   room.lastWire = {};
+  room.lastWireR = {};
   room.newLogs = [];
   room.outbox = [];
   const tags = room.players.map(p => p.power);
@@ -204,6 +222,7 @@ async function startGame(room) {
   // Начальное состояние уже уходит в 'start', поэтому стартовые записи журнала не дублируем
   room.newLogs = [];
   for (const id of Object.keys(api.Game.S.countries)) room.lastWire[id] = JSON.stringify(wireCountry(api.Game.S.countries[id]));
+  for (const id of Object.keys(api.Game.S.regions)) room.lastWireR[id] = JSON.stringify(wireRegion(api.Game.S.regions[id]));
 
   room.players.forEach(p => sendStart(room, p));
   flush(room);
@@ -309,7 +328,7 @@ wss.on('connection', ws => {
           leaveRoom();
           const room = {
             code: newCode(), host: client.clientId, difficulty: 'normal', players: [], api: null,
-            touched: Date.now(), lastFlush: 0, outbox: [], newLogs: [], lastWire: {}
+            touched: Date.now(), lastFlush: 0, outbox: [], newLogs: [], lastWire: {}, lastWireR: {}
           };
           rooms.set(room.code, room);
           room.players.push({ clientId: client.clientId, name: String(msg.name || 'Игрок').slice(0, 20), power: null, ws });

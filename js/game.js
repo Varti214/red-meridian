@@ -48,7 +48,7 @@ const Game = {
   /* ---------------- СОЗДАНИЕ ИГРЫ ---------------- */
   newGame(difficulty = 'normal', tags = ['SOV'], names = {}) {
     const S = {
-      v: 3, day: 0, date: CFG.START_DATE, difficulty, nextNewsDay: 3, ruua: 45, uaw: 55,
+      v: 4, day: 0, date: CFG.START_DATE, difficulty, nextNewsDay: 3, ruua: 45, uaw: 55,
       speed: 1, paused: true,
       tension: CFG.START.tension,
       countries: {}, powers: {}, pwars: {},
@@ -63,7 +63,11 @@ const Game = {
     this.modsCache = {};
     this.pending = {};
     for (const f of Geo.features) S.countries[f.properties.id] = this.makeCountry(f);
-    for (const tag of tags) this.createPower(tag, names[tag]);
+    // Державы забирают стартовые страны, затем страны делятся на регионы, и только потом — армии
+    const startDivs = {};
+    for (const tag of tags) startDivs[tag] = this.claimStart(tag);
+    this.initRegions();
+    for (const tag of tags) this.createPower(tag, names[tag], startDivs[tag]);
     this.eachCountry(c => { for (const t of tags) c.intel[t] = this.baseIntel(c, t); });
 
     for (const tag of tags) {
@@ -100,7 +104,8 @@ const Game = {
     };
   },
 
-  createPower(tag, playerName) {
+  // Стартовые страны державы: правит ею держава, армия ИИ переходит в её резерв
+  claimStart(tag) {
     const d = POWERS[tag];
     let divs = d.divs;
     for (const id of d.start) {
@@ -110,6 +115,11 @@ const Game = {
       c.ctrl = tag; c.core = tag; c.faction = d.faction;
       c.divs = 0; c.baseDivs = 0;
     }
+    return divs;
+  },
+
+  createPower(tag, playerName, divs) {
+    const d = POWERS[tag];
     const P = this.S.powers[tag] = {
       tag, player: playerName || '', out: false,
       pp: CFG.START.pp, mp: d.mp, divs: Math.round(divs), rp: CFG.START.rp,
@@ -129,7 +139,7 @@ const Game = {
       this.takeReserve(n, tag);
       const tanks = Math.min(a.tanks || 0, n);
       const mix = a.tpl ? { [a.tpl]: n } : tanks ? { T1: n - tanks, T2: tanks } : { T1: n };
-      this.newArmy(tag, a.name, n, this.S.countries[a.loc] && this.S.countries[a.loc].ctrl === tag ? a.loc : d.capital, mix);
+      this.newArmy(tag, a.name, n, this.startRegion(tag, a), mix);
     }
     this.S.nextRandomEvent[tag] = 45;
   },
@@ -193,9 +203,6 @@ const Game = {
   c(id) { return this.S && this.S.countries[id]; },
   eachCountry(fn) { for (const id in this.S.countries) fn(this.S.countries[id]); },
   list(pred) { return Object.values(this.S.countries).filter(pred); },
-  lands(tag = this.cur) { return this.list(c => c.ctrl === tag); },
-  playerLands() { return this.lands(); },
-  annexedLands(tag = this.cur) { return this.list(c => c.ctrl === tag && c.core !== tag && !c.radioactive); },
   allies(tag = this.cur) { return this.list(c => this.isAlly(c, tag) && c.faction === POWERS[tag].allyFaction); },
   comAllies() { return this.allies(); },
   isIndependent(id) { const c = this.c(id); return !!c && c.ctrl === c.id; },
@@ -209,62 +216,23 @@ const Game = {
     const k = c.ctrl === c.id ? c : this.c(c.ctrl);
     return !!(k && k.wars[tag]);
   },
-  fronts(tag = this.cur) { return this.list(c => this.atWar(c, tag)); },
-  bordersPower(id, tag = this.cur) {
-    const meta = Geo.meta[id];
-    return !!meta && meta.neighbors.some(n => { const c = this.c(n); return c && c.ctrl === tag; });
-  },
   bordersPlayer(id) { return this.bordersPower(id, this.cur); },
   hostileBorderCount(tag = this.cur) { return this.fronts(tag).filter(c => this.bordersPower(c.id, tag)).length; },
-  wastelands() { return this.list(c => c.radioactive).length; },
   justified(c, tag = this.cur) { return c.cb[tag] === true; },
   justifying(c, tag = this.cur) { const v = c.cb[tag]; return v && v !== true ? v : null; },
 
-  // Снабжение наступления: сухопутная граница — 100%, только через пролив — 80%, десант — 55%
-  supplyFactor(id, tag = this.cur) {
-    const nb = (Geo.meta[id] || { neighbors: [] }).neighbors.filter(n => { const c = this.c(n); return c && c.ctrl === tag; });
-    if (!nb.length) return 0.55;
-    return nb.some(n => !Geo.isSea(id, n)) ? 1 : 0.8;
-  },
   supplyLabel(id) {
     const s = this.supplyFactor(id);
     return s === 1 ? 'Сухопутная граница' : s === 0.8 ? 'Форсирование пролива −20%' : 'Десант без общей границы −45%';
   },
 
-  // Стойкость государства: крупная промышленность — фронт рушится медленнее. Пустошь стойкость теряет.
-  resilience(c) { return c.ctrl === c.id ? 1 + c.factories / 15 : 1.2; },
-  // Военно-технический прогресс ИИ: оборона мира растёт с каждым годом
-  aiTech(c) {
-    const years = this.S.day / 365;
-    return 1 + years * (['WEST', 'AXIS', 'SOV'].includes(c.faction) ? 0.06 : 0.03);
-  },
 
-  playerFactories(tag = this.cur) { let s = 0; this.eachCountry(c => { if (c.ctrl === tag) s += c.factories; }); return s; },
-  worldFactories() { let s = 0; this.eachCountry(c => { if (!c.inert) s += c.factories; }); return s; },
   industryShare(tag = this.cur) { const w = this.worldFactories(); return w ? this.playerFactories(tag) / w : 0; },
 
-  // Оценка численности войск с учётом разведданных (для другой державы — её армия на этом участке)
-  estDivs(c, tag = this.cur) {
-    const Y = this.powerOf(c);
-    const real = Y && Y !== tag ? this.landDefenders(c, Y) : c.divs;
-    const intel = this.intel(c, tag);
-    if (intel >= 80 || c.ctrl === tag || this.isAlly(c, tag)) return { mid: real, lo: Math.round(real), hi: Math.round(real), exact: true };
-    const err = (1 - intel / 100) * 0.5;
-    const mid = Math.max(0, real * (1 + c.noise * err * 0.6));
-    return { mid, lo: Math.max(0, Math.floor(mid * (1 - err))), hi: Math.max(1, Math.ceil(mid * (1 + err))), exact: false };
-  },
 
   /* ---------------- ЕЖЕДНЕВНЫЕ ПРИРОСТЫ (для текущей державы) ---------------- */
   dailyPP() { return Math.max(0.3, (CFG.PP_BASE + this.mods.pp + this.allies().length * 0.1) * this.diff.pp); },
   dailyRP() { return (CFG.RP_BASE + this.playerFactories() * CFG.RP_PER_FACTORY) * (1 + this.mods.rp) * 1.1; },
-  dailyMP() {
-    let s = 0;
-    const tag = this.cur;
-    this.eachCountry(c => {
-      if (c.ctrl === tag && !c.radioactive) s += c.pop * CFG.MP_PER_POP * (c.core === tag ? 1 : CFG.ANNEXED_MP);
-    });
-    return s * (1 + this.mods.mpMult);
-  },
 
   /* ---------------- ИЗМЕНЕНИЕ РЕСУРСОВ (события, ИИ) ---------------- */
   addPP(n) { const P = this.P(); P.pp = Math.max(0, P.pp + n); },
@@ -272,16 +240,6 @@ const Game = {
   addMP(n) { const P = this.P(); P.mp = Math.max(0, P.mp + n); },
   addDivs(n) { if (n >= 0) this.addReserve(this.defaultTpl(), Math.round(n)); else this.loseReserve(-n); },
   addTension(n) { this.S.tension = U.clamp(this.S.tension + n, 0, 100); },
-  addFactories(n, announce) {
-    let target = this.c(this.def().capital);
-    if (!target || target.ctrl !== this.cur || target.radioactive) {
-      const lands = this.lands().filter(c => !c.radioactive);
-      if (!lands.length) return;
-      target = U.pick(lands);
-    }
-    target.factories += n;
-    if (announce) this.log('success', 'Новый завод', `Введено в строй предприятий: ${n}. Регион: ${target.name}.`, target.id);
-  },
   setFaction(id, fac) {
     const c = this.c(id);
     if (!c || c.ctrl !== c.id) return;
@@ -392,10 +350,7 @@ const Game = {
       this.log('nuke', 'Новая боеголовка', `Ядерный арсенал пополнен. Боеголовок в наличии: ${P.warheads}.`);
     }
     // Свои земли постепенно восстанавливают контроль
-    this.eachCountry(c => {
-      if (c.ctrl === this.cur && c.control < 100) c.control = Math.min(100, c.control + 0.6);
-      if (c.ctrl === this.cur && c.siege && c.control >= 99.5) c.siege = null;
-    });
+    for (const r of this.lands()) if (r.control < 100) r.control = Math.min(100, r.control + 0.6);
     this.tickTraining();
     this.tickResearch();
     this.tickFocus();
@@ -550,28 +505,6 @@ const Game = {
   },
 
   /* ---------------- ПОБЕДА И ПОРАЖЕНИЕ ---------------- */
-  checkEnd() {
-    const S = this.S;
-    if (S.over) return;
-    if (this.wastelands() >= CFG.NUCLEAR_WINTER) return this.end('defeat', 'winter', null);
-    for (const tag of this.alive()) {
-      const d = POWERS[tag], cap = this.c(d.capital);
-      if (!cap || cap.ctrl !== tag) {
-        this.P(tag).out = true;
-        this.log('alert', 'Капитуляция державы', `${d.name}: столица (${d.capitalName}) пала. Держава выбывает из борьбы.`, d.capital, null);
-        Bus.emit('powerOut', { power: tag });
-      }
-    }
-    const alive = this.alive(), all = this.tags();
-    if (!alive.length) return this.end('defeat', 'capital', null);
-    if (all.length > 1 && alive.length === 1) return this.end('victory', 'lastStanding', alive[0]);
-    if (S.victoryShown) return;
-    for (const tag of alive) {
-      if (this.industryShare(tag) >= CFG.VICTORY_SHARE) return this.end('victory', 'industry', tag);
-      const rivals = POWERS[tag].rivals.map(id => this.c(id)).filter(Boolean);
-      if (rivals.length && rivals.every(c => c.ctrl === tag)) return this.end('victory', 'rivals', tag);
-    }
-  },
 
   end(type, reason, winner) {
     const S = this.S;
@@ -631,22 +564,6 @@ const Game = {
     return { ok: true };
   },
 
-  canFortify(c) {
-    if (this.outReason()) return this.outReason();
-    if (!c || c.ctrl !== this.cur) return 'Только на своей территории';
-    if (c.fort >= 3) return 'Максимальный уровень';
-    if (this.P().pp < CFG.FORTIFY_PP) return `Нужно ${CFG.FORTIFY_PP} ПВ`;
-    return null;
-  },
-  fortify(id) {
-    const c = this.c(id), why = this.canFortify(c);
-    if (why) return this.fail(why);
-    this.P().pp -= CFG.FORTIFY_PP;
-    c.fort++;
-    this.log('mil', 'Укрепрайон', `Возведён оборонительный рубеж ${c.fort}-го уровня. Регион: ${c.name}.`, id);
-    Bus.emit('stateChanged');
-    return { ok: true };
-  },
 
   /* --- Обоснование и объявление войны --- */
   justifyCost(c) {
@@ -934,38 +851,9 @@ const Game = {
     return d ? A.reduce((s, a) => s + a.org * a.divs, 0) / d : 100;
   },
   setArmyOrg(v) { this.armies().forEach(a => { a.org = v; }); },
-  // Сколько дивизий державы Y защищает землю c: армии на ней (+ резерв, если это столица)
-  landDefenders(c, Y = c.ctrl) {
-    if (!this.isPower(Y)) return c.divs;
-    let s = this.armiesAt(c.id, Y).reduce((t, a) => t + a.divs, 0);
-    if (c.id === POWERS[Y].capital) s += this.P(Y).divs;
-    return s;
-  },
-  // Оборона земли державы Y в «очках»: сумма обороны дивизий (по шаблонам) и доля ПТ-батальонов
-  landDefense(c, Y = c.ctrl) {
-    const mix = {};
-    for (const a of this.armiesAt(c.id, Y)) this.addMix(mix, a.mix);
-    if (c.id === POWERS[Y].capital) this.addMix(mix, this.P(Y).rmix);
-    const st = this.mixStats(mix, Y);
-    return { divs: st.divs, def: st.def, at: st.at };
-  },
   landOrg(c, Y = c.ctrl) {
     const A = this.armiesAt(c.id, Y), d = A.reduce((s, a) => s + a.divs, 0);
     return d ? A.reduce((s, a) => s + a.org * a.divs, 0) / d : 100;
-  },
-  // Потери обороняющихся: делим между армиями на земле и резервом (если столица)
-  takeLosses(c, Y, n) {
-    if (n <= 0) return 0;
-    const A = this.armiesAt(c.id, Y);
-    const cap = c.id === POWERS[Y].capital ? this.P(Y).divs : 0;
-    const total = A.reduce((s, a) => s + a.divs, 0) + cap;
-    if (total <= 0) return 0;
-    n = Math.min(n, total);
-    for (const a of A) this.scaleMix(a, a.divs - n * a.divs / total);
-    if (cap) this.loseReserve(n * cap / total, Y);
-    this.P(Y).stats.divLost += n;
-    this.cleanArmies(Y);
-    return n;
   },
   cleanArmies(tag) {
     const P = this.P(tag);
@@ -975,48 +863,6 @@ const Game = {
     dead.forEach(a => this.log('alert', 'Армия уничтожена', `${a.name} (командующий ${a.general}) перестала существовать.`, a.loc, tag));
   },
   armyName(tag, n) { return { SOV: `${n}-я армия`, WST: `${n}-я армия США`, AXS: `${n}-я группа армий НОАК`, UA: `${n}-й армейский корпус ВСУ` }[tag] || `${n}-я армия`; },
-  newArmy(tag, name, divs, loc, mix) {
-    const P = this.P(tag), d = POWERS[tag];
-    P.armySeq++;
-    const a = {
-      id: tag + P.armySeq, name: name || this.armyName(tag, P.armySeq),
-      general: d.generals[(P.armySeq - 1) % d.generals.length],
-      divs, mix: mix || { [this.defaultTpl(tag)]: divs }, loc: loc || d.capital, org: 100, order: { type: 'hold' }, battle: null
-    };
-    P.armies.push(a);
-    return a;
-  },
-  // Сколько дней идти между соседними землями (через пролив — дольше)
-  stepDays(a, b, army) {
-    const base = Geo.isSea(a, b) ? CFG.ARMY.seaStepDays : CFG.ARMY.stepDays;
-    const speed = army ? this.mixStats(army.mix).speed : 1;
-    return Math.max(1, Math.round(base / speed));
-  },
-  // Путь по своим землям (поиск в ширину по соседству)
-  armyPath(from, to, tag = this.cur) {
-    if (from === to) return [];
-    const prev = { [from]: null }, queue = [from];
-    while (queue.length) {
-      const cur = queue.shift();
-      for (const n of (Geo.meta[cur] || { neighbors: [] }).neighbors) {
-        if (n in prev) continue;
-        const c = this.c(n);
-        if (!c || c.ctrl !== tag) continue;
-        prev[n] = cur;
-        if (n === to) {
-          const path = [];
-          for (let p = to; p !== from; p = prev[p]) path.unshift(p);
-          return path;
-        }
-        queue.push(n);
-      }
-    }
-    return null;
-  },
-  // Снабжение армии при наступлении: сухопутная граница 100%, через пролив 80% (морская пехота помогает)
-  armySupply(fromId, toId) {
-    return Geo.isSea(fromId, toId) ? Math.min(1, 0.8 + this.mods.amph) : 1;
-  },
 
   /* --- Действия с армиями --- */
   canCreateArmy(n) {
@@ -1065,87 +911,11 @@ const Game = {
     Bus.emit('stateChanged');
     return { ok: true, msg: `${a.name}: оборона` };
   },
-  canMove(a, c) {
-    if (!a) return 'Армия не найдена';
-    if (this.outReason()) return this.outReason();
-    if (!c || c.ctrl !== this.cur) return 'Двигаться можно только по своей территории';
-    if (c.id === a.loc) return 'Армия уже здесь';
-    if (!this.armyPath(a.loc, c.id)) return 'Нет пути по нашей территории';
-    return null;
-  },
-  orderMove(id, targetId) {
-    const a = this.army(id), c = this.c(targetId), why = this.canMove(a, c);
-    if (why) return this.fail(why);
-    if (a.battle) this.finishBattle(a, 'stopped');
-    const path = this.armyPath(a.loc, c.id);
-    a.order = { type: 'move', path, left: this.stepDays(a.loc, path[0], a), to: c.id };
-    const days = path.reduce((s, p, i) => s + this.stepDays(i ? path[i - 1] : a.loc, p, a), 0);
-    Bus.emit('stateChanged');
-    return { ok: true, msg: `${a.name} выступает: ${c.name}, ~${U.days(days)}` };
-  },
-  canOrderAttack(a, c) {
-    if (!a) return 'Армия не найдена';
-    if (this.outReason()) return this.outReason();
-    if (!c || c.ctrl === this.cur) return 'Это наша территория';
-    if (!this.atWar(c)) return 'Нет состояния войны';
-    if (a.order.type === 'move') return 'Армия на марше';
-    if (!(Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(c.id)) return 'Армия должна стоять на соседней территории';
-    if (a.org < CFG.ARMY.haltOrg + 10) return `Армия измотана (организация ${Math.round(a.org)}%) — дайте ей отдохнуть`;
-    return null;
-  },
-  orderAttack(id, targetId) {
-    const a = this.army(id), c = this.c(targetId), why = this.canOrderAttack(a, c);
-    if (why) return this.fail(why);
-    if (a.battle && a.battle.target !== c.id) this.finishBattle(a, 'stopped');
-    a.order = { type: 'attack', target: c.id };
-    if (!a.battle) a.battle = { target: c.id, start: this.S.day, days: 0, attLost: 0, defLost: 0, ctrlStart: c.control, ratioSum: 0, last: null, orgStart: a.org };
-    const Y = this.powerOf(c);
-    if (Y) this.log('alert', 'Вражеское наступление', `${POWERS[this.cur].name}: ${a.name} переходит в наступление. Направление: ${c.name}.`, c.id, Y);
-    this.log('mil', 'Наступление начато', `${a.name} атакует. Направление: ${c.name}.`, c.id);
-    Bus.emit('stateChanged');
-    return { ok: true, msg: `${a.name}: наступление — ${c.name}` };
-  },
 
   /* --- Воздушный десант (ВДВ) ---
      Армия, где больше 60% батальонов — десантные, может высадиться на вражескую землю
      в радиусе 2200 км, даже без общей границы. Первые дни — внезапность, но организация
      тает быстрее. Не взяв цель, десант оказывается отрезан и теряет 40% дивизий. */
-  distanceKm(a, b) {
-    const p = Geo.meta[a] && Geo.meta[a].centroid, q = Geo.meta[b] && Geo.meta[b].centroid;
-    if (!p || !q) return Infinity;
-    const r = Math.PI / 180;
-    const h = Math.sin((q.lat - p.lat) * r / 2) ** 2 + Math.cos(p.lat * r) * Math.cos(q.lat * r) * Math.sin((q.lng - p.lng) * r / 2) ** 2;
-    return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)));
-  },
-  // Точки границы страны (каждая 3-я вершина) — для расстояний «от края», а не от центра
-  edgePts(id) {
-    if (!this._edge) {
-      this._edge = {};
-      for (const f of Geo.features) {
-        const g = f.geometry; if (!g) continue;
-        const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
-        const pts = [];
-        for (const p of polys) p[0].forEach((v, i) => { if (i % 3 === 0) pts.push(v); });
-        this._edge[f.properties.id] = pts;
-      }
-    }
-    return this._edge[id] || [];
-  },
-  // Расстояние от ближайшей точки нашей земли до центра цели (аэродромы есть везде, где мы)
-  airDistance(c, tag = this.cur) {
-    const q = Geo.meta[c.id] && Geo.meta[c.id].centroid;
-    if (!q) return Infinity;
-    const r = Math.PI / 180, cq = Math.cos(q.lat * r);
-    let best = Infinity;
-    for (const l of this.lands(tag)) {
-      for (const [lng, lat] of this.edgePts(l.id)) {
-        const h = Math.sin((lat - q.lat) * r / 2) ** 2 + cq * Math.cos(lat * r) * Math.sin((lng - q.lng) * r / 2) ** 2;
-        const d = 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)));
-        if (d < best) best = d;
-      }
-    }
-    return best;
-  },
   isAirborne(a) { return !!a && this.mixStats(a.mix).air >= CFG.AIRBORNE.share; },
   canAirdrop(a, c) {
     if (!a) return 'Армия не найдена';
@@ -1161,269 +931,22 @@ const Game = {
     if (this.P().pp < CFG.AIRBORNE.pp) return `Нужно ${CFG.AIRBORNE.pp} ПВ`;
     return null;
   },
-  orderAirborne(id, targetId) {
-    const a = this.army(id), c = this.c(targetId), why = this.canAirdrop(a, c);
-    if (why) return this.fail(why);
-    this.P().pp -= CFG.AIRBORNE.pp;
-    a.airCd = this.S.day + CFG.AIRBORNE.cooldown;
-    a.order = { type: 'attack', target: c.id, air: true };
-    a.battle = { target: c.id, start: this.S.day, days: 0, attLost: 0, defLost: 0, ctrlStart: c.control, ratioSum: 0, last: null, orgStart: a.org, air: true };
-    const Y = this.powerOf(c);
-    if (Y) this.log('alert', 'Вражеский десант', `${POWERS[this.cur].name} высаживает воздушный десант. Направление: ${c.name}.`, c.id, Y);
-    this.log('mil', 'Воздушный десант', `${a.name} высаживается в тылу врага. Цель: ${c.name}.`, c.id);
-    Bus.emit('stateChanged');
-    return { ok: true, msg: `${a.name}: десант — ${c.name}` };
-  },
 
   /* --- Ежедневная жизнь армий державы (марш, отдых) --- */
-  tickArmies() {
-    const P = this.P(), m = this.mods;
-    for (const a of P.armies) {
-      const o = a.order;
-      if (o.type === 'move') {
-        a.org = Math.min(100, a.org + m.orgRegen * 0.5);
-        if (--o.left > 0) continue;
-        const next = o.path.shift();
-        const c = this.c(next);
-        if (!c || c.ctrl !== this.cur) {
-          a.order = { type: 'hold' };
-          this.log('mil', 'Марш прерван', `${a.name} остановилась: путь отрезан.`, a.loc);
-          continue;
-        }
-        a.loc = next;
-        if (o.path.length) o.left = this.stepDays(a.loc, o.path[0], a);
-        else {
-          a.order = { type: 'hold' };
-          this.log('mil', 'Армия на позициях', `${a.name} заняла оборону: ${c.name}.`, c.id);
-        }
-      } else if (o.type === 'hold') {
-        a.org = Math.min(100, a.org + m.orgRegen);
-      }
-    }
-  },
 
   /* --- Ежедневные сражения: все армии одной державы, атакующие одну цель, бьются вместе --- */
-  tickBattles() {
-    for (const X of this.alive()) {
-      this.as(X, () => {
-        const groups = {};
-        for (const a of this.armies()) {
-          if (a.order.type !== 'attack') continue;
-          const c = this.c(a.order.target);
-          const adj = a.order.air || (Geo.meta[a.loc] || { neighbors: [] }).neighbors.includes(a.order.target);
-          if (!c || c.ctrl === X || !this.atWar(c) || !adj) { this.finishBattle(a, 'invalid'); continue; }
-          (groups[c.id] = groups[c.id] || []).push(a);
-        }
-        for (const [id, list] of Object.entries(groups)) this.battleDay(this.c(id), list);
-      });
-    }
-  },
 
-  battleDay(c, list) {
-    const X = this.cur, P = this.P(), Y = this.powerOf(c);
-    const r = Combat.battleDay(c, list);
-    const total = list.reduce((s, a) => s + a.divs, 0);
-    for (const a of list) {
-      const share = a.divs / total;
-      const lost = r.attLoss * share;
-      this.scaleMix(a, a.divs - lost);
-      a.org = Math.max(0, a.org - r.orgLoss);
-      const b = a.battle;
-      b.days++; b.attLost += lost; b.defLost += r.defLoss * share; b.ratioSum += r.ratio; b.last = r;
-    }
-    P.stats.divLost += r.attLoss;
-    P.stats.enemyKilled += r.defLoss;
-    if (Y) this.takeLosses(c, Y, r.defLoss);
-    else c.divs = Math.max(0, c.divs - r.defLoss);
-    c.control = Math.max(0, c.control - r.ctrlDrop);
-    if (c.control < 99.5) c.siege = { by: X, from: list[0].order.air ? c.id : list[0].loc };
-    if (Y && r.ratio >= 1 && c.control < 50 && !c.alerted) {
-      c.alerted = true;
-      this.log('alert', 'Фронт трещит', `Противник (${POWERS[X].name}) прорывает оборону: ${c.name}, контроль ${Math.round(c.control)}%.`, c.id, Y);
-    }
 
-    // Захват территории: армии входят в неё, фронт сдвигается
-    if (c.control <= 0 || (!Y && c.divs < 0.5)) {
-      const gained = Y ? this.transferLand(c, X) : this.capitulate(c, X);
-      if (Y) this.log('alert', 'Территория потеряна', `Противник (${POWERS[X].name}) захватил: ${c.name}.`, c.id, Y);
-      list.forEach((a, i) => { a.loc = c.id; this.finishBattle(a, 'captured', gained, i > 0); });
-      this.addTension(c.major ? 2 : 1);
-      Bus.emit('mapDirty');
-    } else {
-      list.forEach(a => { if (a.org < CFG.ARMY.haltOrg || a.divs < 0.5) this.finishBattle(a, 'halted'); });
-    }
-    this.cleanArmies(X);
-  },
 
-  // Итог наступления: сводка (как раньше после боя) и запись в журнал
-  finishBattle(a, result, gained = 0, quiet = false) {
-    const b = a.battle;
-    a.battle = null;
-    a.order = { type: 'hold' };
-    if (!b || !b.days) return;
-    const c = this.c(b.target);
-    const P = this.P(), X = this.cur;
-    const avg = b.ratioSum / b.days;
-    const last = b.last;
-    if (b.air && (result === 'halted' || result === 'stopped')) {
-      const lost = a.divs * CFG.AIRBORNE.cutOff;
-      this.scaleMix(a, a.divs - lost);
-      b.attLost += lost;
-      P.stats.divLost += lost;
-      this.log('alert', 'Десант отрезан', `${a.name}: десант не взял цель и прорывался к своим. Потеряно ${U.fmt(lost, 1)} див.`, c.id);
-    }
-    if (result === 'captured') P.stats.won++; else if (result === 'halted') P.stats.lost++;
-    const title = { captured: 'Территория взята', halted: 'Наступление выдохлось', stopped: 'Наступление остановлено', invalid: 'Наступление прекращено' }[result];
-    this.log(result === 'captured' ? 'success' : 'mil', `${a.name}: ${title.toLowerCase()}`,
-      `Направление: ${c.name}. ${U.days(b.days)} боёв, наши потери ${U.fmt(b.attLost, 1)} див., противник ${U.fmt(b.defLost, 1)} див.`, c.id);
-    if (quiet || (result !== 'captured' && result !== 'halted')) return;
-    const Y = last.defender;
-    Bus.emit('battle', {
-      kind: 'offensive', by: X, defender: Y, result,
-      op: a.name, general: a.general, days: b.days,
-      date: this.S.date, targetId: c.id, targetName: c.name, targetFaction: c.faction,
-      targetColor: Y ? POWERS[Y].color : null,
-      att: Object.assign({}, last.att, { divs: Math.round(a.divs + b.attLost) }),
-      def: last.def,
-      ratio: avg, outcome: Combat.outcomeFor(result === 'captured' ? Math.max(avg, 1) : Math.min(avg, 0.99)),
-      playerLost: Math.round(b.attLost * 10) / 10, playerMPLost: Math.round(b.attLost * CFG.DIV.mp),
-      enemyLost: Math.round(b.defLost * 10) / 10, enemyAfter: Y ? this.landDefenders(c, Y) : c.divs,
-      controlBefore: b.ctrlStart, controlAfter: result === 'captured' ? 0 : c.control,
-      capitulated: result === 'captured', captured: result === 'captured' && !!Y, liberation: c.core === X,
-      annexedFactories: gained, loot: 0, resilience: last.resilience,
-      orgCost: Math.round(b.orgStart - a.org), orgLeft: a.org, tension: 0, ppGain: 0
-    });
-  },
-
-  // Армии державы Y на потерянной земле отступают на соседнюю свою землю (или гибнут в окружении)
-  retreatArmies(c, Y) {
-    const A = this.armiesAt(c.id, Y);
-    if (!A.length) return;
-    const back = (Geo.meta[c.id] || { neighbors: [] }).neighbors.map(n => this.c(n)).find(t => t && t.ctrl === Y);
-    for (const a of A) {
-      if (a.battle) this.as(Y, () => this.finishBattle(a, 'invalid', 0, true));
-      a.order = { type: 'hold' };
-      if (back) {
-        a.loc = back.id;
-        this.scaleMix(a, a.divs * 0.8);
-        a.org = 0;
-        this.log('alert', 'Отступление', `${a.name} отступила с потерями: ${back.name}.`, back.id, Y);
-      } else {
-        this.scaleMix(a, 0);
-        this.log('alert', 'Котёл', `${a.name} попала в окружение и уничтожена: ${c.name}.`, c.id, Y);
-      }
-    }
-    this.cleanArmies(Y);
-  },
 
   /* Капитуляция ИИ-страны: она и все подконтрольные ей земли переходят державе X.
      Возвращает число заводов, перешедших к X. */
-  capitulate(c, X, opts = {}) {
-    const wasIndependent = c.ctrl === c.id;
-    if (wasIndependent) {
-      this.eachCountry(t => { if (t !== c && t.ctrl === c.id) this.transferLand(t, X); });
-    }
-    const leaderOf = Object.entries(FACTIONS).find(([, f]) => f.leader === c.id);
-    const keep = this.transferLand(c, X, opts);
-    if (!opts.peaceful) this.addTension(c.major ? 8 : 3);
-    this.P(X).stats.annexed++;
-    if (wasIndependent) {
-      this.log('success', 'Капитуляция', `${c.name} капитулирует. Территория присоединена, заводов получено: ${keep}.`, c.id, X);
-      this.news(`${c.name} капитулирует`, `Страна переходит под контроль державы «${POWERS[X].name}».`, c.id, 'war');
-    } else {
-      this.log('success', 'Освобождение', `Наши войска заняли территорию: ${c.name}.`, c.id, X);
-    }
-    if (leaderOf && wasIndependent) {
-      const facKey = leaderOf[0];
-      this.eachCountry(t => { if (t.faction === facKey && t.ctrl === t.id) t.divs *= 0.8; });
-      this.log('alert', 'Блок обезглавлен', `Лидер блока «${FACTIONS[facKey].name}» повержен. Армии его союзников деморализованы: −20% дивизий.`, null, null);
-    }
-    return keep;
-  },
 
-  // Передача земли державе X. Свои исконные земли возвращаются без потерь.
-  transferLand(c, X, opts = {}) {
-    const prev = c.ctrl;
-    const liberation = c.core === X;
-    const keep = c.radioactive ? 0 : Math.floor(c.factories * (opts.peaceful || liberation ? 1 : 0.6));
-    c.factories = keep;
-    c.ctrl = X;
-    c.faction = POWERS[X].faction;
-    c.wars = {}; c.warDays = 0; c.cb = {}; c.influence = null; c.integrate = null;
-    c.divs = 0; c.control = 100; c.sab = 0; c.sabDays = 0; c.siege = null;
-    c.intel[X] = 100;
-    c.lostFrom = null;
-    c.alerted = false;
-    if (this.isPower(prev) && prev !== X) this.retreatArmies(c, prev);
-    Bus.emit('mapDirty');
-    return keep;
-  },
 
   /* --- Наступление ИИ на землю державы --- */
-  enemyOffensive(src, target) {
-    const S = this.S, Y = target.ctrl, P = this.P(Y);
-    const r = Combat.resolveEnemyOffensive(src, target);
-    r.playerLost = Math.round(this.takeLosses(target, Y, r.playerLost) * 10) / 10;
-    src.divs = Math.max(0, src.divs - r.enemyLost);
-    // Высадкой через пролив можно измотать оборону, но не захватить территорию целиком
-    const floor = r.sea ? 25 : 0;
-    const before = target.control;
-    target.control = Math.max(Math.min(target.control, floor), target.control - r.controlDrop);
-    if (target.control < 99.5) target.siege = { by: src.ctrl === src.id ? src.id : src.ctrl, from: src.id };
-    r.controlDrop = Math.round(before - target.control);
-    if (r.ratio >= 1) {
-      this.log('mil', r.sea ? 'Вражеский десант' : 'Вражеское наступление',
-        `${src.name} атакует. Направление: ${target.name}. Контроль −${r.controlDrop}%, наши потери: ${r.playerLost} див.`, target.id, Y);
-    } else {
-      this.log('mil', 'Атака отбита',
-        `Оборона выстояла. Направление: ${target.name}. Противник (${src.name}) потерял ${U.fmt(r.enemyLost, 1)} див.`, target.id, Y);
-    }
-    Bus.emit('enemyAttack', { by: src.id, srcId: src.id, targetId: target.id, ratio: r.ratio, power: Y, controlDrop: r.controlDrop, control: target.control });
-    if (target.control <= 0) this.loseTerritory(target, src);
-    Bus.emit('stateChanged');
-  },
 
-  loseTerritory(t, src) {
-    const Y = t.ctrl;
-    const occ = src.ctrl === src.id ? src : (this.c(src.ctrl) || src);
-    t.ctrl = occ.id;
-    t.faction = occ.faction;
-    t.control = 60;
-    t.siege = null;
-    t.divs = src.divs * 0.3;
-    src.divs *= 0.7;
-    t.cb = {};
-    t.fort = Math.max(0, t.fort - 1);
-    t.intel[Y] = 60;
-    t.lostFrom = Y;
-    this.retreatArmies(t, Y);
-    this.log('alert', 'Территория потеряна', `Фронт прорван. Под контролем противника (${occ.name}): ${t.name}.`, t.id, Y);
-    Bus.emit('mapDirty');
-    if (t.id !== POWERS[Y].capital) {
-      this.popup({
-        id: 'sys_lost_' + t.id, art: 'i-swords', cat: 'alert',
-        title: 'Прорыв фронта',
-        text: `Танковые колонны противника прорвали оборону. Территория «${t.name}» оккупирована. Заводы региона больше не работают на нас. Освободить землю можно наступлением — она отмечена как фронт.`,
-        options: [{ label: 'Ни шагу назад!', tip: 'Организуйте контрнаступление', fx: () => {} }]
-      }, {}, Y);
-    }
-    this.checkEnd();
-  },
 
   /* --- Мир --- */
-  peaceTarget(c) {
-    if (this.isPower(c.ctrl)) return c;
-    return c.ctrl === c.id ? c : this.c(c.ctrl);
-  },
-  peaceChance(c) {
-    const S = this.S, enemy = this.peaceTarget(c);
-    if (!enemy || this.isPower(enemy.ctrl)) return 0;
-    const occupied = this.list(t => t.ctrl === enemy.id && t !== enemy).length;
-    const fatigue = Math.min(0.3, (enemy.warDays || 0) / 365 * 0.15);
-    const p = 0.25 + (100 - enemy.control) / 200 + (enemy.divs < this.P().divs * 0.5 ? 0.15 : 0) + fatigue
-      - S.tension / 400 - occupied * 0.1;
-    return U.clamp(p, 0.05, 0.9);
-  },
   canPeace(c) {
     if (this.outReason()) return this.outReason();
     if (!this.atWar(c)) return 'Нет состояния войны';
@@ -1460,28 +983,7 @@ const Game = {
     return { ok: true, msg: 'Противник отверг мир', warn: true };
   },
 
-  // Мир с ИИ-страной на условиях статус-кво: отнятые у X земли возвращаются
-  makePeace(enemy, X = this.cur) {
-    if (!enemy || !enemy.wars[X]) return false;
-    delete enemy.wars[X];
-    enemy.warDays = 0;
-    this.eachCountry(t => { if (t !== enemy && t.ctrl === enemy.id && t.lostFrom === X) this.transferLand(t, X); });
-    this.addTension(-5);
-    this.log('dip', 'Белый мир', `Подписан мир на условиях довоенного статус-кво. Сторона договора: ${enemy.name}.`, enemy.id, X);
-    Bus.emit('mapDirty');
-    Bus.emit('stateChanged');
-    return true;
-  },
 
-  makePowerPeace(X, Y) {
-    const k = this.pairKey(X, Y);
-    if (!this.S.pwars[k]) return;
-    delete this.S.pwars[k];
-    this.addTension(-5);
-    this.news('Мир между державами', `${POWERS[X].name} и ${POWERS[Y].name} подписывают мир на условиях статус-кво.`, null, 'war');
-    Bus.emit('mapDirty');
-    Bus.emit('stateChanged');
-  },
 
   /* --- Влияние и интеграция --- */
   influenceCost() { return Math.round(CFG.INFLUENCE.pp * (1 - this.mods.influence)); },
@@ -1582,91 +1084,7 @@ const Game = {
   },
 
   /* --- Стратегическое ядерное оружие --- */
-  canNuke(c) {
-    if (this.outReason()) return this.outReason();
-    if (!this.mods.nukes) return 'Требуется межконтинентальная ракета (4-й уровень ядерной ветки)';
-    if (c.ctrl === this.cur) return 'Это наша территория';
-    if (c.inert) return 'Здесь нет государства';
-    if (this.isAlly(c)) return 'Союзник по блоку';
-    if (c.radioactive) return 'Уже радиоактивная пустошь';
-    if (this.P().warheads < 1) return 'Нет боеголовок';
-    return null;
-  },
-  nuke(id) {
-    const S = this.S, X = this.cur, c = this.c(id);
-    const why = this.canNuke(c);
-    if (why) return this.fail(why);
-    const P = this.P();
-    P.warheads--;
-    P.stats.nukes++;
-    const Y = this.powerOf(c);
-    const before = { factories: c.factories, divs: Y ? this.landDefenders(c, Y) : c.divs, control: c.control };
-    const wasWar = this.atWar(c);
-    const faction = c.faction;
-    this.applyNuclearDamage(c, true);
-    if (Y) this.takeLosses(c, Y, this.landDefenders(c, Y) * (this.mods.thermo ? 1 : 0.85));
-    const after = { factories: c.factories, divs: Y ? this.landDefenders(c, Y) : c.divs, control: c.control };
-    const dt = faction === 'NEU' ? 35 : CFG.NUKE_TENSION;
-    this.addTension(dt);
 
-    if (this.mods.thermo) {
-      Geo.meta[id].neighbors.forEach(n => {
-        const t = this.c(n);
-        if (t && t.ctrl !== X && !this.isAlly(t) && !this.isPower(t.ctrl)) t.divs *= 0.75;
-      });
-    }
-
-    // Война уже шла и армия уничтожена — территория занята. Иначе удар начинает войну.
-    let capitulated = false, gained = 0;
-    if (wasWar && (c.control <= 0 || (!Y && c.divs < 0.5))) {
-      capitulated = true;
-      gained = Y ? this.transferLand(c, X) : this.capitulate(c, X);
-    } else if (!wasWar) {
-      if (Y) this.S.pwars[this.pairKey(X, Y)] = { since: S.day };
-      else if (c.ctrl === c.id) { c.wars[X] = true; c.warDays = 0; AI.onPlayerDeclares(c, X); }
-    }
-    const reinforced = capitulated || Y ? 0 : Math.max(0, c.divs - after.divs);
-
-    const usa = this.c('USA');
-    const usaAI = usa && usa.ctrl === 'USA' && !usa.radioactive && id !== 'USA';
-    let retaliation = false;
-    if (usaAI && (faction === 'WEST' || usa.wars[X]) && U.chance(0.6)) {
-      retaliation = true;
-      S.scheduled.push({ day: S.day + U.randi(3, 6), type: 'retaliation', by: 'USA', victim: X });
-      if (!usa.wars[X]) this.aiDeclareWar('USA', X, 'Вашингтон отвечает на ядерный удар');
-    }
-
-    this.log('nuke', 'Стратегический удар', `Ракета поразила цель: ${c.name}. Регион превращён в радиоактивную пустошь.`, id, null);
-    this.news(`Ядерный удар: ${c.name}`, `Держава «${POWERS[X].name}» применила ядерное оружие. Мир на грани.`, id, 'war');
-    if (Y) {
-      this.popup({
-        id: 'sys_nuked', art: 'i-nuke', cat: 'nuke', title: 'Ядерный удар по нашей территории',
-        text: `${POWERS[X].name} нанесли ядерный удар. Цель: ${c.name}. Регион превращён в радиоактивную пустошь, войска на этом участке уничтожены.`,
-        options: [{ label: 'Мы выстоим', tip: 'Регион потерял все заводы', fx: () => {} }]
-      }, {}, Y);
-    }
-    Bus.emit('nuke', {
-      by: X, targetId: id, name: c.name, before, after, reinforced,
-      tension: dt, retaliation, capitulated, gained, thermo: this.mods.thermo, wastelands: this.wastelands()
-    });
-    Bus.emit('stateChanged');
-    this.checkEnd();
-    return { ok: true };
-  },
-
-  applyNuclearDamage(c, byPower) {
-    c.radioactive = true;
-    c.factories = 0;
-    c.pop = Math.round(c.pop * 0.6);
-    c.fort = 0;
-    if (byPower) {
-      if (!this.isPower(c.ctrl)) c.divs = this.mods.thermo ? 0 : c.divs * 0.15;
-      if (this.atWar(c)) c.control = Math.max(0, c.control - 70);
-    } else {
-      c.control = Math.max(0, c.control - 50);
-    }
-    Bus.emit('mapDirtyDelayed');
-  },
 
   /* --- Исследования --- */
   techCost(t) {
@@ -1732,7 +1150,7 @@ const Game = {
     if (fx.endSpirit) this.removeSpirit(X, fx.endSpirit);
     if (fx.claims) {
       const ids = fx.claims === 'neighbors'
-        ? [...new Set(this.lands().flatMap(c => Geo.meta[c.id] ? Geo.meta[c.id].neighbors : []))]
+        ? [...new Set(this.lands().flatMap(r => Regions.nb(r.id).map(n => { const o = this.ownerNation(this.r(n)); return o && o.id; })).filter(Boolean))]
         : fx.claims;
       const got = [];
       for (const id of ids) {
@@ -1821,7 +1239,7 @@ const Game = {
   saveInfo(auto) {
     try {
       const S = JSON.parse(U.storage.get(this.saveKey(auto)));
-      return S && S.v === 3 ? { date: S.date, difficulty: S.difficulty, savedAt: S.savedAt || 0, auto: !!auto, me: S.me } : null;
+      return S && S.v === 4 ? { date: S.date, difficulty: S.difficulty, savedAt: S.savedAt || 0, auto: !!auto, me: S.me } : null;
     } catch (e) { return null; }
   },
   latestSave() {
@@ -1834,7 +1252,7 @@ const Game = {
     if (auto === undefined) { const l = this.latestSave(); auto = l ? l.auto : false; }
     try {
       const S = JSON.parse(U.storage.get(this.saveKey(auto)));
-      if (!S || S.v !== 3 || !S.countries || !S.powers) throw new Error('несовместимое сохранение');
+      if (!S || S.v !== 4 || !S.countries || !S.powers || !S.regions) throw new Error('несовместимое сохранение');
       this.loadState(S);
       return true;
     } catch (e) {
@@ -1844,6 +1262,7 @@ const Game = {
   },
   // Принять готовое состояние (из сохранения или с сервера)
   loadState(S) {
+    Regions.build();
     for (const f of Geo.features) {
       if (!S.countries[f.properties.id]) S.countries[f.properties.id] = this.makeCountry(f);
     }
@@ -1860,6 +1279,8 @@ const Game = {
       if (c.pol === undefined && c.faction !== 'NONE') c.pol = Politics.make(c.id, (Geo.meta[c.id] || {}).sub);
     }
     this.S = S;
+    this.bindAll();
+    this._gw = null;
     if (S.me && S.powers[S.me]) { this.me = S.me; this.cur = S.me; }
     this.diff = DIFFICULTY[S.difficulty] || DIFFICULTY.normal;
     this.modsCache = {};

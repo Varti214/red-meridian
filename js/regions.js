@@ -5,10 +5,11 @@
    у остальных — автоматически по сторонам света; число областей растёт с площадью.
    Форма области — ячейка Вороного вокруг точки, обрезанная по границе страны.
 
-   Во время наступления области переходят к захватчику по одной:
-   чем ниже контроль страны, тем больше областей занято — начиная с тех,
-   что ближе к армии, которая наступает (c.siege = { by, from }).
-   Весь расчёт — только для отображения; правила игры живут на уровне стран.
+   Регион — это настоящая земля: у него свой владелец (S.regions[id].ctrl),
+   заводы, население, укрепления и контроль; на регионах стоят армии,
+   за них идут бои. Страна (S.countries) — это государство: политика,
+   блок, войны, выборы. Здесь — только неизменная география (форма,
+   соседи, границы, столицы); она одинаково строится в браузере и на сервере.
    ============================================================ */
 
 const REGION_SEEDS = {
@@ -86,6 +87,8 @@ const Regions = {
       try { this.byCountry[id] = this.buildCountry(f); } catch (e) { console.warn('[regions]', id, e); this.byCountry[id] = []; }
       this.list.push(...this.byCountry[id]);
     }
+    this.link();
+    this.setup();
   },
 
   // Внешние кольца всех частей страны
@@ -243,38 +246,162 @@ const Regions = {
     return out;
   },
 
-  /* ---- Кто держит регион ---- */
-  // Порядок захвата: от ближайших к наступающему
-  siegeOrder(c) {
-    const R = this.byCountry[c.id] || [];
-    const s = c.siege;
-    if (!s || R.length < 2) return R;
-    const key = s.from + '|' + R.length;
-    if (c._ordKey === key && c._ord) return c._ord;
-    const anchor = (s.from && Geo.meta[s.from] && Geo.frontAnchor(s.from, c.id, 0)) || (Geo.meta[s.from] && Geo.meta[s.from].centroid) || Geo.meta[c.id].centroid;
-    const kc = Math.cos(anchor.lat * Math.PI / 180);
-    const ord = R.slice().sort((a, b) => Math.hypot((a.c.lng - anchor.lng) * kc, a.c.lat - anchor.lat) - Math.hypot((b.c.lng - anchor.lng) * kc, b.c.lat - anchor.lat));
-    Object.defineProperty(c, '_ord', { value: ord, writable: true, enumerable: false, configurable: true });
-    Object.defineProperty(c, '_ordKey', { value: key, writable: true, enumerable: false, configurable: true });
-    return ord;
+  /* ============================================================
+     СВЯЗИ МЕЖДУ РЕГИОНАМИ
+     Два региона — соседи, если у них общий участок границы (совпадают
+     хотя бы две вершины). Острова без соседей соединяются с ближайшим
+     регионом своей страны «морем»; морские переправы между странами
+     (SEA_LINKS) — с ближайшей парой регионов.
+     ============================================================ */
+  link() {
+    const EPS = 0.006, Q = 0.02;
+    const grid = new Map();
+    const key = (x, y) => Math.round(x / Q) + ',' + Math.round(y / Q);
+    for (const r of this.list) {
+      r.nb = []; r.sea = {}; r.border = {};
+      r.polys.forEach((ring, pi) => ring.forEach(([x, y], vi) => {
+        const k = key(x, y);
+        (grid.get(k) || grid.set(k, []).get(k)).push({ r, x, y, pi, vi });
+      }));
+    }
+    // Совпадающие вершины разных регионов
+    const shared = new Map();   // «a|b» → Set вершин региона a (pi:vi)
+    for (const r of this.list) {
+      r.polys.forEach((ring, pi) => ring.forEach(([x, y], vi) => {
+        const gx = Math.round(x / Q), gy = Math.round(y / Q);
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+          const cell = grid.get((gx + dx) + ',' + (gy + dy));
+          if (!cell) continue;
+          for (const o of cell) {
+            if (o.r === r || Math.abs(o.x - x) > EPS || Math.abs(o.y - y) > EPS) continue;
+            const k = r.id + '|' + o.r.id;
+            (shared.get(k) || shared.set(k, new Set()).get(k)).add(pi + ':' + vi);
+          }
+        }
+      }));
+    }
+    const byId = this.byId = Object.fromEntries(this.list.map(r => [r.id, r]));
+    const connect = (a, b, sea) => {
+      if (a.nb.includes(b.id)) return;
+      a.nb.push(b.id); b.nb.push(a.id);
+      if (sea) { a.sea[b.id] = true; b.sea[a.id] = true; }
+    };
+    for (const [k, set] of shared) {
+      if (set.size < 2) continue;
+      const [ia, ib] = k.split('|');
+      const a = byId[ia], b = byId[ib];
+      connect(a, b, false);
+      // Линия общей границы: подряд идущие общие вершины кольца региона a
+      const runs = [];
+      a.polys.forEach((ring, pi) => {
+        let run = [];
+        for (let vi = 0; vi <= ring.length; vi++) {
+          const i = vi % ring.length;
+          if (vi < ring.length && set.has(pi + ':' + i)) run.push(ring[i]);
+          else { if (run.length >= 2) runs.push(run); run = []; }
+        }
+      });
+      if (runs.length) a.border[b.id] = runs;
+    }
+    const dist = (a, b) => Math.hypot((((a.c.lng - b.c.lng + 540) % 360) - 180) * Math.cos((a.c.lat + b.c.lat) / 2 * Math.PI / 180), a.c.lat - b.c.lat);
+    const closestPair = (A, B) => {
+      let best = null, bd = Infinity;
+      for (const a of A) for (const b of B) { const d = dist(a, b); if (d < bd) { bd = d; best = [a, b]; } }
+      return best;
+    };
+    // Острова: соединяем с ближайшим регионом своей страны
+    for (const [cid, R] of Object.entries(this.byCountry)) {
+      if (R.length < 2) continue;
+      // Компоненты связности внутри страны
+      const seen = new Set(), comps = [];
+      for (const r of R) {
+        if (seen.has(r.id)) continue;
+        const comp = [], q = [r];
+        seen.add(r.id);
+        while (q.length) {
+          const x = q.shift(); comp.push(x);
+          for (const n of x.nb) { const y = byId[n]; if (y.cid === cid && !seen.has(n)) { seen.add(n); q.push(y); } }
+        }
+        comps.push(comp);
+      }
+      comps.sort((a, b) => b.length - a.length);
+      for (let i = 1; i < comps.length; i++) {
+        const p = closestPair(comps[i], comps.slice(0, i).flat());
+        if (p) connect(p[0], p[1], true);
+      }
+    }
+    // Соседние страны (по суше и через проливы) — если общей вершины не нашлось, ближайшая пара
+    for (const f of Geo.features) {
+      const a = f.properties.id, m = Geo.meta[a];
+      if (!m) continue;
+      for (const b of m.neighbors) {
+        if (a > b) continue;
+        const A = this.byCountry[a] || [], B = this.byCountry[b] || [];
+        if (!A.length || !B.length) continue;
+        const linked = A.some(r => r.nb.some(n => byId[n].cid === b));
+        if (linked) continue;
+        const p = closestPair(A, B);
+        if (p) connect(p[0], p[1], Geo.isSea(a, b));
+      }
+    }
   },
-  occupiedCount(c) {
-    const R = this.byCountry[c.id] || [];
-    if (!c.siege || c.control >= 99.5 || !R.length) return 0;
-    return U.clamp(Math.round((1 - c.control / 100) * R.length), 0, R.length - 1);
+
+  /* ---- Столичные регионы и веса (для раздела заводов и населения) ---- */
+  setup() {
+    for (const [cid, R] of Object.entries(this.byCountry)) {
+      if (!R.length) continue;
+      const cap = (typeof POWERS !== 'undefined' && Object.values(POWERS).find(p => p.capital === cid) || {}).capitalPos || CAPITALS[cid];
+      let capR = R[0];
+      if (cap) {
+        capR = R.find(r => r.polys.some(ring => this.inside(ring, cap.lng, cap.lat))) ||
+          R.slice().sort((a, b) => Math.hypot(a.c.lng - cap.lng, a.c.lat - cap.lat) - Math.hypot(b.c.lng - cap.lng, b.c.lat - cap.lat))[0];
+      } else if (!REGION_SEEDS[cid]) {
+        const m = Geo.meta[cid].centroid;
+        capR = R.slice().sort((a, b) => Math.hypot(a.c.lng - m.lng, a.c.lat - m.lat) - Math.hypot(b.c.lng - m.lng, b.c.lat - m.lat))[0];
+      }
+      for (const r of R) {
+        r.capital = r === capR;
+        // Заводы и люди тянутся к столице и южнее полярного круга
+        r.w = Math.pow(Math.max(0.05, r.area || 1), 0.3) * (r.capital ? 4 : 1) * (Math.abs(r.c.lat) > 60 ? 0.5 : 1);
+      }
+      this.capitalOf[cid] = capR.id;
+    }
   },
-  occupied(c) { const n = this.occupiedCount(c); return n ? this.siegeOrder(c).slice(0, n) : []; },
-  // Регион, за который сейчас идёт бой (следующий на очереди)
-  frontRegion(c) {
-    const R = this.byCountry[c.id] || [];
-    if (!R.length) return null;
-    if (!c.siege) return null;
-    return this.siegeOrder(c)[this.occupiedCount(c)] || null;
+  capitalOf: {},
+
+  // Разделить целое число между регионами пропорционально весам (метод наибольших остатков)
+  split(cid, total) {
+    const R = this.byCountry[cid] || [];
+    const W = R.reduce((s, r) => s + r.w, 0) || 1;
+    const raw = R.map(r => total * r.w / W);
+    const out = raw.map(Math.floor);
+    let rest = total - out.reduce((s, x) => s + x, 0);
+    raw.map((x, i) => [x - Math.floor(x), i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (rest-- > 0) out[i]++; });
+    return out;
   },
-  ownerOf(r) {
-    const c = Game.c(r.cid);
-    if (!c) return null;
-    return this.occupied(c).includes(r) ? c.siege.by : c.ctrl;
+
+  /* ---- Справочные функции ---- */
+  get(id) { return this.byId && this.byId[id]; },
+  nb(id) { const r = this.get(id); return r ? r.nb : []; },
+  isSea(a, b) { const r = this.get(a); return !!(r && r.sea[b]); },
+  adjacent(a, b) { return this.nb(a).includes(b); },
+  center(id) { const r = this.get(id); return r ? r.c : (Geo.meta[id] && Geo.meta[id].centroid); },
+  // Точка на общей границе двух регионов (для фишек и стрелок)
+  borderPoint(a, b) {
+    const r = this.get(a), runs = r && r.border[b];
+    if (runs && runs.length) {
+      const run = runs.reduce((x, y) => (y.length > x.length ? y : x));
+      const p = run[Math.floor(run.length / 2)];
+      return { lat: p[1], lng: p[0] };
+    }
+    const A = this.center(a), B = this.center(b);
+    return A && B ? { lat: (A.lat + B.lat) / 2, lng: (A.lng + B.lng) / 2 } : A;
+  },
+  // Точка внутри региона a, сдвинутая к соседу b (k — доля пути от центра к границе)
+  toward(a, b, k = 0.5) {
+    const A = this.center(a), P = this.borderPoint(a, b);
+    if (!A || !P) return A;
+    return { lat: A.lat + (P.lat - A.lat) * k, lng: A.lng + (P.lng - A.lng) * k };
   },
   ownerName(tag) { return Game.isPower(tag) ? POWERS[tag].name : (Game.c(tag) || {}).name || tag; },
   ownerColor(tag) {
@@ -283,3 +410,34 @@ const Regions = {
     return (FACTIONS[c && c.faction] || FACTIONS.NEU).color;
   }
 };
+
+// Столицы стран (для столичного региона): широта, долгота
+const CAPITALS = {
+  FRA: { lat: 48.86, lng: 2.35 }, DEU: { lat: 52.52, lng: 13.4 }, GBR: { lat: 51.5, lng: -0.12 }, ITA: { lat: 41.9, lng: 12.5 },
+  ESP: { lat: 40.42, lng: -3.7 }, POL: { lat: 52.23, lng: 21.0 }, TUR: { lat: 39.93, lng: 32.86 }, IRN: { lat: 35.7, lng: 51.4 },
+  IND: { lat: 28.6, lng: 77.2 }, JPN: { lat: 35.68, lng: 139.7 }, BRA: { lat: -15.8, lng: -47.9 }, CAN: { lat: 45.42, lng: -75.7 },
+  AUS: { lat: -35.3, lng: 149.1 }, MEX: { lat: 19.43, lng: -99.13 }, ARG: { lat: -34.6, lng: -58.4 }, SAU: { lat: 24.7, lng: 46.7 },
+  EGY: { lat: 30.04, lng: 31.24 }, PAK: { lat: 33.7, lng: 73.05 }, IDN: { lat: -6.2, lng: 106.8 }, KAZ: { lat: 51.16, lng: 71.45 },
+  BLR: { lat: 53.9, lng: 27.56 }, KOR: { lat: 37.57, lng: 126.98 }, PRK: { lat: 39.03, lng: 125.75 }, SWE: { lat: 59.33, lng: 18.07 },
+  NOR: { lat: 59.91, lng: 10.75 }, FIN: { lat: 60.17, lng: 24.94 }, ROU: { lat: 44.43, lng: 26.1 }, GEO: { lat: 41.72, lng: 44.79 },
+  MDA: { lat: 47.01, lng: 28.86 }, SYR: { lat: 33.51, lng: 36.29 }, UKR: { lat: 50.45, lng: 30.52 }, RUS: { lat: 55.75, lng: 37.62 },
+  USA: { lat: 38.9, lng: -77.04 }, CHN: { lat: 39.9, lng: 116.4 }, NGA: { lat: 9.06, lng: 7.49 }, ZAF: { lat: -25.75, lng: 28.19 },
+  ETH: { lat: 9.03, lng: 38.74 }, COD: { lat: -4.32, lng: 15.31 }, DZA: { lat: 36.75, lng: 3.06 }, LBY: { lat: 32.89, lng: 13.19 },
+  SDN: { lat: 15.5, lng: 32.56 }, IRQ: { lat: 33.31, lng: 44.36 }, AFG: { lat: 34.53, lng: 69.17 }, MNG: { lat: 47.92, lng: 106.92 },
+  THA: { lat: 13.75, lng: 100.5 }, VNM: { lat: 21.03, lng: 105.85 }, MMR: { lat: 19.76, lng: 96.08 }, PER: { lat: -12.05, lng: -77.04 },
+  COL: { lat: 4.71, lng: -74.07 }, VEN: { lat: 10.48, lng: -66.9 }, CHL: { lat: -33.45, lng: -70.67 }, BOL: { lat: -16.5, lng: -68.15 },
+  KEN: { lat: -1.29, lng: 36.82 }, TZA: { lat: -6.16, lng: 35.75 }, AGO: { lat: -8.84, lng: 13.23 }, MAR: { lat: 34.02, lng: -6.83 },
+  UZB: { lat: 41.3, lng: 69.24 }, TKM: { lat: 37.95, lng: 58.38 }, YEM: { lat: 15.37, lng: 44.19 }, OMN: { lat: 23.59, lng: 58.41 },
+  GRC: { lat: 37.98, lng: 23.73 }, BGR: { lat: 42.7, lng: 23.32 }, SRB: { lat: 44.79, lng: 20.45 }, HUN: { lat: 47.5, lng: 19.04 },
+  CZE: { lat: 50.08, lng: 14.44 }, AUT: { lat: 48.21, lng: 16.37 }, PRT: { lat: 38.72, lng: -9.14 }, NLD: { lat: 52.37, lng: 4.9 },
+  MLI: { lat: 12.64, lng: -8.0 }, NER: { lat: 13.51, lng: 2.11 }, TCD: { lat: 12.13, lng: 15.06 }, MRT: { lat: 18.09, lng: -15.98 },
+  CMR: { lat: 3.85, lng: 11.5 }, ZMB: { lat: -15.39, lng: 28.32 }, ZWE: { lat: -17.83, lng: 31.05 }, MOZ: { lat: -25.97, lng: 32.57 },
+  MDG: { lat: -18.88, lng: 47.51 }, NAM: { lat: -22.56, lng: 17.08 }, BWA: { lat: -24.65, lng: 25.91 }, SOM: { lat: 2.05, lng: 45.32 },
+  PNG: { lat: -9.44, lng: 147.18 }, NZL: { lat: -41.29, lng: 174.78 }, PHL: { lat: 14.6, lng: 120.98 }, MYS: { lat: 3.14, lng: 101.69 },
+  CUB: { lat: 23.11, lng: -82.37 }, ECU: { lat: -0.18, lng: -78.47 }, PRY: { lat: -25.26, lng: -57.58 }, URY: { lat: -34.9, lng: -56.16 },
+  ISL: { lat: 64.15, lng: -21.94 }, IRL: { lat: 53.35, lng: -6.26 }, LKA: { lat: 6.93, lng: 79.85 }, BGD: { lat: 23.81, lng: 90.41 },
+  NPL: { lat: 27.72, lng: 85.32 }, KHM: { lat: 11.56, lng: 104.92 }, LAO: { lat: 17.97, lng: 102.63 }, TWN: { lat: 25.03, lng: 121.56 },
+  ISR: { lat: 31.77, lng: 35.21 }, JOR: { lat: 31.95, lng: 35.93 }, ARE: { lat: 24.45, lng: 54.38 }, KGZ: { lat: 42.87, lng: 74.59 },
+  TJK: { lat: 38.56, lng: 68.79 }, AZE: { lat: 40.41, lng: 49.87 }, ARM: { lat: 40.18, lng: 44.51 }
+};
+

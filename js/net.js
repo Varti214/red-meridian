@@ -165,6 +165,7 @@ const Net = {
   },
 
   // Что на карте зависит от страны: если это не изменилось — карту не перекрашиваем
+  regionSig(r) { return [r.ctrl, r.radioactive, r.fort, r.control < 100].join('|'); },
   mapSig(c) {
     return [c.ctrl, c.faction, c.radioactive, JSON.stringify(c.wars), JSON.stringify(c.cb), c.pol && c.pol.ide,
       c.influence && c.influence.by, c.integrate && c.integrate.by].join('|');
@@ -181,7 +182,14 @@ const Net = {
       const old = S.countries[id];
       if (!old || this.mapSig(old) !== this.mapSig(c)) mapChanged = true;
       S.countries[id] = c;
+      Game.bindNation(c);
     }
+    for (const [id, r] of Object.entries(p.regions || {})) {
+      const old = S.regions[id];
+      if (!old || this.regionSig(old) !== this.regionSig(r)) mapChanged = true;
+      if (old) Object.assign(old, r); else S.regions[id] = r;
+    }
+    Game._gw = null;
     (p.logs || []).forEach(e => this.addLog(e));
     Game.modsCache = {};
     Bus.emit('tick');
