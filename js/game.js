@@ -329,6 +329,7 @@ const Game = {
     if (this.tickTrade) this.tickTrade();
     if (this.tickUN) this.tickUN();
     if (this.tickWinter) this.tickWinter();
+    if (this.tickCivilWars) this.tickCivilWars();
     for (const tag of this.alive()) this.as(tag, () => this.tickEvents());
     if (this.tickAutopilot) this.tickAutopilot();
     if (this.server) this.autoResolveEvents();
@@ -1273,7 +1274,7 @@ const Game = {
     for (const f of Geo.features) {
       if (!S.countries[f.properties.id]) S.countries[f.properties.id] = this.makeCountry(f);
     }
-    for (const id of Object.keys(S.countries)) if (!Geo.meta[id]) delete S.countries[id];
+    for (const id of Object.keys(S.countries)) if (!Geo.meta[id] && !S.countries[id].rebel) delete S.countries[id];
     if (!this.server) S.paused = true;
     for (const [tag, P] of Object.entries(S.powers)) {
       if (!P.templates) P.templates = START_TEMPLATES.map((t, i) => ({ id: 'T' + (i + 1), name: t.names[tag], bats: Object.assign({}, t.bats) }));

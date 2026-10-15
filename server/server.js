@@ -24,7 +24,7 @@ const ROOM_TTL_MS = 20 * 60 * 1000;   // комната без игроков ж
 const FLUSH_MS = 250;                  // как часто рассылать изменения
 
 /* ---------------- Игровое ядро: один раз компилируем, запускаем в каждой комнате ---------------- */
-const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/regions.js', 'js/combat.js', 'js/ai.js', 'js/game.js', 'js/lands.js', 'js/peace.js', 'js/resources.js', 'js/un.js', 'js/alliance.js', 'js/winter.js', 'js/command.js',
+const ENGINE_FILES = ['data/countries.js', 'js/util.js', 'js/data.js', 'js/focuses.js', 'js/geo.js', 'js/regions.js', 'js/combat.js', 'js/ai.js', 'js/game.js', 'js/lands.js', 'js/peace.js', 'js/resources.js', 'js/un.js', 'js/alliance.js', 'js/winter.js', 'js/command.js', 'js/civilwar.js',
   'js/parties.js', 'js/politics.js', 'js/events.js', 'js/ruua.js', 'js/autopilot.js'];
 const ENGINE_SRC = ENGINE_FILES.map(f => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n;\n')
   + '\n;({ Game, Geo, Bus, POWERS, DIFFICULTY });';
@@ -169,6 +169,8 @@ function flush(room) {
     const j = JSON.stringify(w);
     if (room.lastWire[id] !== j) { room.lastWire[id] = j; changed[id] = w; any = true; }
   }
+  // Исчезнувшие государства (подавленные повстанцы) — сообщаем клиентам
+  for (const id of Object.keys(room.lastWire)) if (!S.countries[id]) { delete room.lastWire[id]; changed[id] = null; any = true; }
   const rch = {};
   let anyR = false;
   for (const [id, r] of Object.entries(S.regions)) {
@@ -268,7 +270,7 @@ function runLoop(room) {
 }
 
 /* ---------------- Действия игроков ---------------- */
-const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'saveTemplate', 'deleteTemplate', 'peace', 'signTreaty', 'proposeTreaty', 'buyRes', 'cancelTrade', 'toggleEmbargo', 'proposeResolution', 'joinOrg', 'leaveOrg', 'proposeAlliance', 'breakAlliance', 'joinAllyWar', 'orderFront', 'giveDivs', 'givePP', 'giveRes', 'stopGiveRes', 'influence', 'integrate', 'spy',
+const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'saveTemplate', 'deleteTemplate', 'peace', 'signTreaty', 'proposeTreaty', 'buyRes', 'cancelTrade', 'toggleEmbargo', 'proposeResolution', 'joinOrg', 'leaveOrg', 'proposeAlliance', 'breakAlliance', 'joinAllyWar', 'orderFront', 'giveDivs', 'givePP', 'giveRes', 'stopGiveRes', 'inciteCivilWar', 'supportSide', 'influence', 'integrate', 'spy',
   'nuke', 'startResearch', 'startFocus', 'chooseEvent', 'setPaused', 'setSpeed', 'supportParty', 'meddle', 'coup', 'setAssist', 'orderAirborne']);
 
 function doAction(room, p, name, args) {

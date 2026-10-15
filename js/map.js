@@ -172,6 +172,7 @@ const MapView = {
     else if (front) { base = COLORS.front; side = '#5a2a08'; }
     else if (this.layer === 'ide' && N && !N.inert && Game.gov(N)) { base = IDEOLOGIES[Game.gov(N).ide].color; side = U.shade(base, -0.55); }
     else if (Game.isPower(r.ctrl)) { const D = POWERS[r.ctrl]; base = D.color; side = D.side; }
+    else if (N && N.rebel && N.pol && IDEOLOGIES[N.pol.ide]) { base = U.shade(IDEOLOGIES[N.pol.ide].color, -0.15); side = U.shade(base, -0.5); }   // повстанцы — цвет их идеологии
     else { const F = FACTIONS[N ? N.faction : 'NEU'] || FACTIONS.NEU; base = F.color; side = F.side; }
     // Оккупированный регион (держит не его страна) — чуть темнее
     const home = Game.c(r.cid);

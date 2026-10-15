@@ -27,7 +27,7 @@ Object.assign(Game, {
   // Регионы страны (все, кому бы они ни принадлежали)
   regionsOf(cid) { return (Regions.byCountry[cid] || []).map(g => this.S.regions[g.id]).filter(Boolean); },
   // Регионы, которые держит само государство c
-  heldRegions(c) { return this.regionsOf(c.id).filter(r => r.ctrl === c.ctrl); },
+  heldRegions(c) { return c.rebel ? this.lands(c.id) : this.regionsOf(c.id).filter(r => r.ctrl === c.ctrl); },   // у повстанцев — все занятые ими регионы
   capitalRegion(tag) { return Regions.capitalOf[POWERS[tag] ? POWERS[tag].capital : tag]; },
   isCapitalRegion(r, tag) {
     if (tag) return r.id === this.capitalRegion(tag);

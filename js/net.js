@@ -179,6 +179,7 @@ const Net = {
     Object.assign(S, p.top || {});
     if (JSON.stringify(S.pwars) !== oldPwars) mapChanged = true;
     for (const [id, c] of Object.entries(p.countries || {})) {
+      if (c === null) { delete S.countries[id]; mapChanged = true; continue; }
       const old = S.countries[id];
       if (!old || this.mapSig(old) !== this.mapSig(c)) mapChanged = true;
       S.countries[id] = c;

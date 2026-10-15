@@ -237,6 +237,8 @@ const UI = {
       case 'pol-support': return run('supportParty', id, a.dataset.ide);
       case 'pol-meddle': return run('meddle', id, a.dataset.ide);
       case 'pol-coup': return this.confirmCoup(id, a.dataset.ide);
+      case 'civil-incite': return run('inciteCivilWar', id, a.dataset.ide);
+      case 'civil-support': return run('supportSide', id);
       case 'news-goto': this.closeModal(); this.select(id, true); return;
     }
   },
@@ -652,8 +654,9 @@ const UI = {
     if (N && Game.isAlly(N)) badges.push(this.badge('Союзник', 'sov'));
     if (N && N.major && !own && !rival) badges.push(this.badge('Великая держава', 'major'));
     if (war) badges.push(this.badge('Война', 'war'));
-    if (occupied && !own) badges.push(this.badge('Оккупирован: ' + Regions.ownerName(r.ctrl), 'war'));
+    if (occupied && !own && !(N && N.rebel)) badges.push(this.badge('Оккупирован: ' + Regions.ownerName(r.ctrl), 'war'));
     if (N && N.cb[me] === true) badges.push(this.badge('Повод для войны', 'cb'));
+    if (N && (N.civil || N.rebel)) badges.push(this.badge(N.rebel ? 'Повстанцы' : 'Гражданская война', 'war'));
     if (r.radioactive) badges.push(this.badge('Радиация', 'rad'));
 
     const sub = H && H.name !== r.name ? `<div class="cp-sub">${U.esc(H.name)}${Game.isCapitalRegion(r) ? ' · столичный регион' : ''}</div>` : '';
@@ -2118,6 +2121,16 @@ const UI = {
         label: 'Переворот: ' + label, why: Game.canCoup(c, sel),
         sub: `Шанс ${U.pct(Game.coupChance(c, sel))} · напряжённость +3–5%`, cost: this.costTag(CFG.POL.coup),
         tip: 'Военные и политики выбранной партии берут власть. Единомышленники могут сразу вступить в наш блок.' });
+      if (!c.rebel && !c.civil) h += this.actBtn({ act: 'civil-incite', id: c.id, data: `data-ide="${sel}"`, icon: 'i-swords', cls: 'act-danger',
+        label: 'Разжечь гражданскую войну: ' + label, why: Game.canIncite(c, sel),
+        sub: `Шанс ${U.pct(Game.inciteChance(c, sel))} · часть страны перейдёт к повстанцам`, cost: this.costTag(CIVIL.incitePP),
+        tip: 'Агенты поднимают мятеж: дальние от столицы регионы переходят к повстанцам выбранной партии. Если повстанцы — наши единомышленники, они вступят в наш блок.' });
+    }
+    if (!own && (c.civil || c.rebel)) {
+      const other = c.rebel ? Game.c(c.rebel.of) : Game.c(c.civil);
+      h += `<div class="cp-note warn">Идёт гражданская война${other ? ': против ' + U.esc(other.name) : ''}. Можно отправить добровольцев одной из сторон или вмешаться войной.</div>`;
+      h += this.actBtn({ act: 'civil-support', id: c.id, icon: 'i-div', label: 'Отправить добровольцев: ' + c.name, why: Game.canSupportSide(c),
+        sub: '1 дивизия из резерва → +1,5 дивизии этой стороне', cost: this.costTag(CIVIL.supportPP) });
     }
     return h + '</div>';
   },
