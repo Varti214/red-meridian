@@ -379,6 +379,7 @@ const MapView = {
 
   /* ---- Эффекты ---- */
   fxBattle(targetId, success, tag) { this.impl && this.impl.fxBattle(targetId, success, tag); },
+  fxPing(id, rgb, label) { this.impl && this.impl.fxPing && this.impl.fxPing(id, rgb, label); },
   fxEnemyAttack(srcId, targetId, success) { this.impl && this.impl.fxEnemyAttack(srcId, targetId, success); },
   fxNuke(targetId, fromPos) {
     this.hold(1900);
@@ -648,6 +649,12 @@ const GlobeRenderer = {
       stroke: 1.1, dash: 0.25, gap: 3, init: 1, time: 900 }, 1000);
     const col = success ? [255, 190, 60] : [255, 70, 50];
     this.addTempRing({ lat: to.lat, lng: to.lng, maxR: 5, speed: 4, period: 450, color: t => `rgba(${col},${(1 - t) * 0.9})` }, 2600);
+  },
+
+  fxPing(id, rgb) {
+    if (!this.g) return;
+    const to = Regions.center(id);
+    this.addTempRing({ lat: to.lat, lng: to.lng, maxR: 4, speed: 2, period: 700, color: t => `rgba(${rgb},${(1 - t) * 0.95})` }, 6000);
   },
 
   fxEnemyAttack(srcId, targetId, success) {
@@ -1188,6 +1195,21 @@ const FlatRenderer = {
     for (const fx of this.effects) {
       const t = (now - fx.t0) / fx.dur;
       if (t < 0) continue;   // эффект ещё не начался (например, взрыв ждёт подлёта ракеты)
+      if (fx.type === 'text') {
+        const [x, y] = this.toScreen(fx.lng, fx.lat);
+        ctx.font = '700 12px "Roboto Condensed", sans-serif';
+        ctx.textAlign = 'center';
+        const w = ctx.measureText(fx.text).width + 12;
+        ctx.globalAlpha = Math.min(1, (1 - t) * 3);
+        ctx.fillStyle = 'rgba(8,12,18,0.85)';
+        ctx.fillRect(x - w / 2, y - 34, w, 18);
+        ctx.strokeStyle = `rgb(${fx.rgb})`;
+        ctx.strokeRect(x - w / 2, y - 34, w, 18);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(fx.text, x, y - 21);
+        ctx.globalAlpha = 1;
+        continue;
+      }
       if (fx.type === 'ring') {
         const [x, y] = this.toScreen(fx.lng, fx.lat);
         for (let k = 0; k < 3; k++) {
@@ -1243,6 +1265,12 @@ const FlatRenderer = {
     const to = Regions.center(targetId), from = MapView.sourceFor(targetId, tag);
     this.addFx({ type: 'arc', from, to, color: 'rgba(255,90,60,0.95)', width: 3, dur: 900 });
     this.addFx({ type: 'ring', lat: to.lat, lng: to.lng, r: 46, rgb: success ? '255,190,60' : '255,70,50', dur: 2200 });
+  },
+
+  fxPing(id, rgb, label) {
+    const to = Regions.center(id);
+    this.addFx({ type: 'ring', lat: to.lat, lng: to.lng, r: 34, rgb, dur: 6000 });
+    this.addFx({ type: 'text', lat: to.lat, lng: to.lng, text: label, rgb, dur: 6000 });
   },
 
   fxEnemyAttack(srcId, targetId, success) {

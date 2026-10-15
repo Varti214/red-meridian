@@ -401,6 +401,29 @@ wss.on('connection', ws => {
           return;
         }
 
+        case 'chat':
+        case 'ping': {
+          const room = client.room, p = me();
+          if (!room || !p || !room.api) return;
+          const G = room.api.Game;
+          const allyOf = q => q === p || (G.allied && G.allied(p.power, q.power));
+          let data, to;
+          if (msg.type === 'chat') {
+            const text = String(msg.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+            if (!text) return;
+            to = msg.to === 'ally' ? 'ally' : 'all';
+            data = { from: p.name, power: p.power, text, to, t: Date.now() };
+          } else {
+            const region = String(msg.region || '').slice(0, 20);
+            if (!G.r(region)) return;
+            to = 'ally';
+            data = { from: p.name, power: p.power, region, kind: ['attack', 'defend', 'alert'].includes(msg.kind) ? msg.kind : 'alert' };
+          }
+          const out = JSON.stringify({ type: msg.type, data });
+          room.players.forEach(q => { if (q.ws && (to === 'all' || allyOf(q))) sendWs(q.ws, out); });
+          return;
+        }
+
         case 'act': {
           const room = client.room, p = me();
           if (!room || !p) return reply(rid, { ok: false, msg: 'Вы не в игре' });

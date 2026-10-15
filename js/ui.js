@@ -90,6 +90,8 @@ const UI = {
     on('war', () => Sound.play('alert'));
     on('peaceConf', p => { if (p.power === Game.me) { Sound.play('ok'); setTimeout(() => this.checkPeaceConf(), 400); } });
     on('treaty', t => this.onTreaty(t));
+    on('chat', m => this.onChat(m));
+    on('ping', p => this.onPing(p));
     on('unResult', r => { if (this.isOpen('un')) this.renderUN(true); });
     on('mapDirty', () => MapView.refresh());
     on('mapDirtyDelayed', () => { MapView.hold(1900); MapView.refresh(); });
@@ -102,7 +104,7 @@ const UI = {
     on('newGame', () => this.onGameStart());
     on('loaded', () => this.onGameStart());
     on('lobby', room => this.renderLobby(room));
-    on('netStart', () => { this.closeIntro(); this.toast('Сетевая игра началась. Пауза снимается кнопкой ▶ — у всех сразу.', 'info'); });
+    on('netStart', () => { this.closeIntro(); this.showChat(); this.toast('Сетевая игра началась. Пауза снимается кнопкой ▶ — у всех сразу.', 'info'); });
     on('netStatus', st => this.setNetStatus(st));
     // Запасной вход в консоль — тройной клик по дате
     this.el.date.addEventListener('click', e => { if (e.detail === 3 && this.started) this.openConsole(); });
@@ -123,6 +125,7 @@ const UI = {
     $$('.hidden-ui').forEach(el => el.classList.remove('hidden-ui'));
     this.renderAll();
     this.updateWindows();
+    this.showChat();
     this.updateTopbar();
     this.updateClock();
     this.setNetStatus(Net.mp ? 'ok' : 'off');
