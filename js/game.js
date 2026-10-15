@@ -312,6 +312,7 @@ const Game = {
     S.date += DAY_MS;
 
     for (const tag of this.alive()) this.as(tag, () => this.tickPower());
+    if (this.tickFronts) this.tickFronts();
     this.tickBattles();
 
     this.tickProjects();

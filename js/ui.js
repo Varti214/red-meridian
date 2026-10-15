@@ -222,6 +222,7 @@ const UI = {
       case 'army-attack': return run('orderAttack', a.dataset.army, id);
       case 'army-air': return run('orderAirborne', a.dataset.army, id);
       case 'army-hold': return run('orderHold', a.dataset.army);
+      case 'army-front': return run('orderFront', a.dataset.army, a.dataset.mode || null);
       case 'army-reinforce': return run('reinforceArmy', a.dataset.army, +a.dataset.n);
       case 'army-disband': return run('disbandArmy', a.dataset.army).then(() => this.selectArmy(null));
       case 'army-create': return Act.call('createArmy', +a.dataset.n).then(res => { this.result(res); if (res && res.army) this.selectArmy(res.army); });
@@ -856,7 +857,7 @@ const UI = {
       const nm = id => (Game.r(id) || { name: '?' }).name;
       const st = ar.order.type === 'attack' ? (ar.order.air ? 'Десант: ' : 'Наступает: ') + nm(ar.order.target)
         : ar.order.type === 'move' ? 'На марше: ' + nm(ar.order.to || ar.order.path[ar.order.path.length - 1])
-        : 'Оборона: ' + loc.name;
+        : (ar.front === 'attack' ? 'По фронту: ' : ar.front === 'defend' ? 'Держит фронт: ' : 'Оборона: ') + loc.name;
       cards.push(`<div class="fc fc-army ${ar.id === this.selectedArmy ? 'sel' : ''} st-${ar.order.type}" data-act="army-select" data-army="${ar.id}">
         <div class="fc-top"><svg class="fc-nato" viewBox="0 0 16 11"><rect x=".5" y=".5" width="15" height="10"/><path d="M.5 .5l15 10M15.5 .5l-15 10"/></svg><span class="fc-name">${U.esc(ar.name)}</span></div>
         <div class="fc-row"><span>${U.esc(st)}</span></div>
@@ -1380,7 +1381,22 @@ const UI = {
       const to = Game.r(a.order.to || a.order.path[a.order.path.length - 1]) || { name: '?' };
       return `Марш: ${to.name} (${U.days(a.order.left + a.order.path.slice(1).length * CFG.ARMY.stepDays)})`;
     }
-    return 'Оборона позиций';
+    return a.front === 'attack' ? 'Наступает по фронту' : a.front === 'defend' ? 'Держит фронт' : 'Оборона позиций';
+  },
+  // Блок генерала: портрет, навыки, уровень, опыт войск
+  generalHTML(a) {
+    const s = Game.genSkills(a), v = Game.veterancy(a.xp);
+    const pips = n => '<i class="gp on"></i>'.repeat(n) + '<i class="gp"></i>'.repeat(Math.max(0, 6 - n));
+    const next = GEN_LEVELS[s.level + 1];
+    return `<div class="gen-box">
+      <div class="gen-portrait">${Portraits.html(a.general, 'ptr-fill')}</div>
+      <div class="gen-info"><b>${U.esc(a.general)}</b><span>Генерал ${s.level ? s.level + '-го уровня' : 'без боевого опыта'}${next ? ` · до уровня ${U.days(Math.max(0, next - (a.gxp || 0)))} боёв` : ''}</span>
+        <div class="gen-sk" data-tip="Атака: +4% к силе наступления за единицу"><em>Атака</em>${pips(s.atk)}</div>
+        <div class="gen-sk" data-tip="Оборона: +4% к обороне региона, где стоит армия"><em>Оборона</em>${pips(s.def)}</div>
+        <div class="gen-sk" data-tip="Снабжение: −5% к расходу организации в наступлении за единицу"><em>Снабжение</em>${pips(s.log)}</div></div>
+    </div>
+    <div class="vet-row" data-tip="Опыт растёт в боях. Новобранцы → обстрелянные (+6%) → ветераны (+12%) → элита (+20%) к атаке и обороне. Пополнение разбавляет опыт.">
+      <span>${v.name}${v.k > 1 ? ` · +${Math.round((v.k - 1) * 100)}%` : ''}</span>${this.meter(a.xp || 0, 'meter-gold')}<b>${Math.round(a.xp || 0)}</b></div>`;
   },
 
   // Одна строка прогноза: шанс выиграть день, дни до захвата и запас организации
@@ -1406,6 +1422,12 @@ const UI = {
         ${this.stat('Оборона', U.fmt(Game.mixStats(a.mix).def, 0))}
         ${this.stat('Скорость марша', U.days(Game.stepDays(a.loc, a.loc, a)) + ' на переход', '', 'Скорость задаёт самый медленный батальон: пехота — 3 дня, техника — 2 дня')}
       </div>
+      ${this.generalHTML(a)}
+      <div class="cp-sec"><div class="cp-sec-title">Приказ по линии фронта</div><div class="front-btns">
+        <button class="btn btn-sm ${a.front === 'attack' ? 'btn-gold' : ''}" data-act="army-front" data-army="${a.id}" data-mode="attack" data-tip="Армия сама бьёт по соседним вражеским регионам, где прогноз хороший, и идёт дальше после захвата. Отдыхает, если организация ниже 60%.">Наступать по фронту</button>
+        <button class="btn btn-sm ${a.front === 'defend' ? 'btn-gold' : ''}" data-act="army-front" data-army="${a.id}" data-mode="defend" data-tip="Армия сама выдвигается на самый опасный участок границы поблизости и держит его.">Держать фронт</button>
+        <button class="btn btn-sm ${!a.front ? 'btn-gold' : ''}" data-act="army-front" data-army="${a.id}" data-mode="" data-tip="Только ваши приказы. Любой ручной приказ тоже включает этот режим.">Вручную</button>
+      </div></div>
       <div class="army-mix">${Object.entries(a.mix).filter(([, n]) => n >= 0.5).map(([id, n]) => { const t = Game.tpl(id); return `<span class="mix-chip">${U.esc(t ? t.name : '?')} <b>×${Math.round(n)}</b></span>`; }).join('')}</div>
       <div class="cp-note army-hint">Кликните по <b>своей</b> земле — армия пойдёт туда. По <b>соседней вражеской</b> — начнёт наступление. Правый клик тоже работает.</div>`;
     if (a.battle && a.order.type === 'attack') {
