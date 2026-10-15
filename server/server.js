@@ -268,7 +268,7 @@ function runLoop(room) {
 }
 
 /* ---------------- Действия игроков ---------------- */
-const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'saveTemplate', 'deleteTemplate', 'peace', 'signTreaty', 'proposeTreaty', 'buyRes', 'cancelTrade', 'toggleEmbargo', 'proposeResolution', 'joinOrg', 'leaveOrg', 'proposeAlliance', 'breakAlliance', 'joinAllyWar', 'orderFront', 'influence', 'integrate', 'spy',
+const ACTIONS = new Set(['deploy', 'fortify', 'justify', 'declareWar', 'createArmy', 'reinforceArmy', 'disbandArmy', 'orderHold', 'orderMove', 'orderAttack', 'saveTemplate', 'deleteTemplate', 'peace', 'signTreaty', 'proposeTreaty', 'buyRes', 'cancelTrade', 'toggleEmbargo', 'proposeResolution', 'joinOrg', 'leaveOrg', 'proposeAlliance', 'breakAlliance', 'joinAllyWar', 'orderFront', 'giveDivs', 'givePP', 'giveRes', 'stopGiveRes', 'influence', 'integrate', 'spy',
   'nuke', 'startResearch', 'startFocus', 'chooseEvent', 'setPaused', 'setSpeed', 'supportParty', 'meddle', 'coup', 'setAssist', 'orderAirborne']);
 
 function doAction(room, p, name, args) {

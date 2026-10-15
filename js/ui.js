@@ -180,6 +180,7 @@ const UI = {
       case 'focus': return this.openResearch('focus');
       case 'trade': return this.openTrade();
       case 'un': return this.openUN();
+      case 'ally': return this.openAlliance();
       case 'toggle-pause': return this.togglePause();
       case 'speed-up': return this.setSpeed(Game.S.speed + 1);
       case 'speed-down': return this.setSpeed(Game.S.speed - 1);
@@ -272,6 +273,7 @@ const UI = {
     else if (e.code === 'KeyN') this.openNews();
     else if (e.code === 'KeyT') this.openTrade();
     else if (e.code === 'KeyU') this.openUN();
+    else if (e.code === 'KeyA') this.openAlliance();
     else if (e.code === 'KeyI') this.toggleMapLayer();
   },
 
@@ -413,6 +415,8 @@ const UI = {
   // Открытые окна и значки на кнопках: конференция, торговля, ООН
   updateWindows() {
     this.checkPeaceConf();
+    this.updateAllyButton();
+    if (this.isOpen('ally')) this.renderAlliance();
     this.updateTradeBadge();
     if (this.isOpen('trade')) this.renderTrade();
     this.updateUNBadge();

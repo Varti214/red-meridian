@@ -351,7 +351,8 @@ const MapView = {
       for (const a of Game.armies(tag)) {
         const mine = tag === me;
         const loc = Game.r(a.loc);
-        if (!mine && (!loc || !(Game.bordersPower(a.loc, me) || loc.ctrl === me))) continue;
+        // Армии союзника видны всегда, чужие — только у наших границ
+        if (!mine && !(Game.allied && Game.allied(me, tag)) && (!loc || !(Game.bordersPower(a.loc, me) || loc.ctrl === me))) continue;
         const p = this.armyPos(a, tag);
         if (!p) continue;
         const k = Math.round(p.lat * 2) + ':' + Math.round(p.lng * 2);

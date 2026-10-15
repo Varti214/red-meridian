@@ -1810,3 +1810,31 @@ body.assist-on .tb-clock { position: relative; }
 .vet-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; font-size: 11.5px; color: #c9d3df; margin-bottom: 6px; }
 .vet-row b { font: 700 12px var(--font-c); color: var(--gold-2); }
 .front-btns { display: flex; flex-wrap: wrap; gap: 5px; }
+
+/* ---------- Окно союза ---------- */
+.m-ally { width: min(1000px, 100%); border-color: rgba(98, 214, 132, 0.4); }
+.m-ally .pc-head > svg { color: #8be3a4; }
+.al-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.al-col { padding: 10px; border: 1px solid rgba(255, 255, 255, 0.08); border-top: 3px solid var(--pc); border-radius: 6px; background: rgba(255, 255, 255, 0.025); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.al-head { display: flex; gap: 10px; align-items: center; }
+.al-head b { font: 700 16px/1.2 var(--font-c); display: block; }
+.al-head b small { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.al-head span { font-size: 11.5px; color: var(--muted); }
+.al-portrait { position: relative; flex: none; width: 48px; height: 60px; overflow: hidden; border-radius: 3px; border: 1px solid var(--pc); background: #10161e; font: 700 15px var(--font-c); color: #fff; }
+.al-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.al-stats div { padding: 5px 6px; background: rgba(255, 255, 255, 0.04); border-radius: 4px; display: flex; flex-direction: column; }
+.al-stats span { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.al-stats b { font: 700 15px var(--font-c); }
+.al-res-row { display: flex; gap: 10px; flex-wrap: wrap; font: 700 12.5px var(--font-c); }
+.al-res-row span { display: inline-flex; align-items: center; gap: 3px; color: var(--rc); }
+.al-res-row span.neg { color: #ff9a80 !important; }
+.al-res-row svg { width: 13px; height: 13px; }
+.al-war { font-size: 12px; color: #ffb072; }
+.al-list { max-height: 220px; }
+.al-army { text-align: left; color: inherit; font: inherit; padding: 6px 8px; border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 5px; background: rgba(255, 255, 255, 0.025); cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
+.al-army:hover { background: rgba(255, 255, 255, 0.07); }
+.al-army b { font-size: 12.5px; }
+.al-army span, .al-army em { font-size: 11px; color: var(--muted); font-style: normal; }
+.al-help { display: flex; flex-wrap: wrap; gap: 5px; }
+.al-res { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.al-res span { flex: 1; }

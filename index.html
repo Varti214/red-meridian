@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Красный меридиан — 2018</title>
 <meta name="description" content="Браузерная гранд-стратегия в духе Hearts of Iron IV: современный мир с 2018 года: Россия, США и Китай, выборы, перевороты и мировые новости.">
-<link rel="stylesheet" href="css/style.css?v=49">
+<link rel="stylesheet" href="css/style.css?v=50">
 </head>
 <body>
 
@@ -83,6 +83,7 @@
     <div class="tb-right">
       <button class="tb-btn" data-ui="research" title="Исследования (R)"><svg><use href="#i-book"/></svg><span>Наука</span><em class="tb-badge hidden" id="badge-research"></em></button>
       <button class="tb-btn" data-ui="trade" title="Ресурсы и торговля (T)"><svg><use href="#i-trade"/></svg><span>Торговля</span><em class="tb-badge hidden" id="badge-trade"></em></button>
+      <button class="tb-btn hidden" id="tb-ally" data-ui="ally" title="Союз (A)"><svg><use href="#i-flag"/></svg><span>Союз</span></button>
       <button class="tb-btn" data-ui="un" title="ООН и организации (U)"><svg><use href="#i-globe"/></svg><span>ООН</span><em class="tb-badge hidden" id="badge-un"></em></button>
       <button class="tb-btn" data-ui="news" title="Мировые новости (N)"><svg><use href="#i-news"/></svg><span>Новости</span><em class="tb-badge hidden" id="badge-news"></em></button>
       <button class="tb-btn" data-ui="focus" title="Национальные фокусы (F)"><svg><use href="#i-tree"/></svg><span>Фокусы</span><em class="tb-badge hidden" id="badge-focus"></em></button>
@@ -168,38 +169,39 @@
 </div>
 
 <!-- 3D-движок: Three.js + globe.gl одним локальным файлом (без интернета) -->
-<script src="vendor/globe-bundle.min.js?v=49" onerror="window.__vendorFailed=true"></script>
+<script src="vendor/globe-bundle.min.js?v=50" onerror="window.__vendorFailed=true"></script>
 <!-- Границы стран: Natural Earth 1:110m -->
-<script src="data/countries.js?v=49" onerror="window.__geoFailed=true"></script>
-<script src="js/util.js?v=49"></script>
-<script src="js/data.js?v=49"></script>
-<script src="js/focuses.js?v=49"></script>
-<script src="js/geo.js?v=49"></script>
-<script src="js/regions.js?v=49"></script>
-<script src="js/combat.js?v=49"></script>
-<script src="js/ai.js?v=49"></script>
-<script src="js/game.js?v=49"></script>
-<script src="js/lands.js?v=49"></script>
-<script src="js/peace.js?v=49"></script>
-<script src="js/resources.js?v=49"></script>
-<script src="js/un.js?v=49"></script>
-<script src="js/alliance.js?v=49"></script>
-<script src="js/winter.js?v=49"></script>
-<script src="js/command.js?v=49"></script>
-<script src="js/parties.js?v=49"></script>
-<script src="js/politics.js?v=49"></script>
-<script src="js/events.js?v=49"></script>
-<script src="js/ruua.js?v=49"></script>
-<script src="js/autopilot.js?v=49"></script>
-<script src="js/net.js?v=49"></script>
-<script src="js/audio.js?v=49"></script>
-<script src="js/labels.js?v=49"></script>
-<script src="js/map.js?v=49"></script>
-<script src="js/portraits.js?v=49"></script>
-<script src="js/ui.js?v=49"></script>
-<script src="js/ui-peace.js?v=49"></script>
-<script src="js/ui-trade.js?v=49"></script>
-<script src="js/ui-un.js?v=49"></script>
-<script src="js/main.js?v=49"></script>
+<script src="data/countries.js?v=50" onerror="window.__geoFailed=true"></script>
+<script src="js/util.js?v=50"></script>
+<script src="js/data.js?v=50"></script>
+<script src="js/focuses.js?v=50"></script>
+<script src="js/geo.js?v=50"></script>
+<script src="js/regions.js?v=50"></script>
+<script src="js/combat.js?v=50"></script>
+<script src="js/ai.js?v=50"></script>
+<script src="js/game.js?v=50"></script>
+<script src="js/lands.js?v=50"></script>
+<script src="js/peace.js?v=50"></script>
+<script src="js/resources.js?v=50"></script>
+<script src="js/un.js?v=50"></script>
+<script src="js/alliance.js?v=50"></script>
+<script src="js/winter.js?v=50"></script>
+<script src="js/command.js?v=50"></script>
+<script src="js/parties.js?v=50"></script>
+<script src="js/politics.js?v=50"></script>
+<script src="js/events.js?v=50"></script>
+<script src="js/ruua.js?v=50"></script>
+<script src="js/autopilot.js?v=50"></script>
+<script src="js/net.js?v=50"></script>
+<script src="js/audio.js?v=50"></script>
+<script src="js/labels.js?v=50"></script>
+<script src="js/map.js?v=50"></script>
+<script src="js/portraits.js?v=50"></script>
+<script src="js/ui.js?v=50"></script>
+<script src="js/ui-peace.js?v=50"></script>
+<script src="js/ui-trade.js?v=50"></script>
+<script src="js/ui-un.js?v=50"></script>
+<script src="js/ui-ally.js?v=50"></script>
+<script src="js/main.js?v=50"></script>
 </body>
 </html>

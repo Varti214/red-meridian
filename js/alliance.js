@@ -64,6 +64,9 @@ Object.assign(Game, {
     const X = this.cur;
     if (!this.allied(X, tag)) return this.fail('Союза нет');
     delete this.pacts()[this.pairKey(X, tag)];
+    // Бесплатные поставки друг другу прекращаются
+    this.S.trade = this.contracts().filter(t => !(t.price === 0 && ((t.buyer === X && t.seller === tag) || (t.buyer === tag && t.seller === X))));
+    this.S.tradeSeq = (this.S.tradeSeq || 0) + 1;
     // Армии на земле бывшего союзника возвращаются домой
     for (const [t, other] of [[X, tag], [tag, X]]) {
       for (const a of this.armies(t)) {
@@ -127,6 +130,67 @@ Object.assign(Game, {
         ]
       }, {}, A);
     }
+  }
+});
+
+/* --- Помощь союзнику: дивизии, ПВ, ресурсы --- */
+Object.assign(Game, {
+  canGive(tag) {
+    if (this.outReason()) return this.outReason();
+    if (!this.allied(this.cur, tag)) return 'Только союзнику';
+    if (this.P(tag).out) return 'Союзник выбыл';
+    return null;
+  },
+  giveDivs(tag, n) {
+    const why = this.canGive(tag);
+    if (why) return this.fail(why);
+    const P = this.P(), X = this.cur;
+    n = Math.min(Math.round(n), P.divs);
+    if (n < 1) return this.fail('Резерв пуст');
+    const mix = this.takeReserve(n);
+    for (const [id, k] of Object.entries(mix)) this.addReserve(id, k, tag);
+    this.log('dip', 'Помощь союзнику', `Союзнику (${POWERS[tag].name}) переданы дивизии: ${n}.`);
+    this.log('success', 'Помощь союзника', `${POWERS[X].name} передаёт нам дивизии: ${n}. Они в резерве в столице.`, null, tag);
+    Bus.emit('stateChanged');
+    return { ok: true, msg: `Передано дивизий: ${n}` };
+  },
+  givePP(tag, n) {
+    const why = this.canGive(tag);
+    if (why) return this.fail(why);
+    const P = this.P(), X = this.cur;
+    n = Math.round(n);
+    if (n < 1 || P.pp < n) return this.fail(`Нужно ${n} ПВ`);
+    P.pp -= n;
+    this.P(tag).pp += n;
+    this.log('dip', 'Помощь союзнику', `Союзнику (${POWERS[tag].name}) передано ${n} ПВ.`);
+    this.log('success', 'Помощь союзника', `${POWERS[X].name} передаёт нам ${n} ПВ.`, null, tag);
+    Bus.emit('stateChanged');
+    return { ok: true, msg: `Передано ${n} ПВ` };
+  },
+  // Бесплатные поставки ресурса союзнику (контракт с нулевой ценой)
+  giveRes(tag, k, n = 1) {
+    const why = this.canGive(tag);
+    if (why) return this.fail(why);
+    if (!RES[k]) return this.fail('Нет такого ресурса');
+    const X = this.cur, S = this.S;
+    if (this.sellerFree(X, k) < n) return this.fail('Нет свободных излишков');
+    const ex = this.contracts().find(t => t.buyer === tag && t.seller === X && t.res === k && t.price === 0);
+    if (ex) ex.n += n;
+    else this.contracts().push({ id: 'tr' + (S.tradeSeq = (S.tradeSeq || 0) + 1), buyer: tag, seller: X, res: k, n, price: 0, since: S.day, gift: true });
+    S.tradeSeq = (S.tradeSeq || 0) + 1;
+    this.log('dip', 'Поставки союзнику', `Бесплатно поставляем союзнику (${POWERS[tag].name}): ${RES[k].short}, +${n} ед.`);
+    this.log('success', 'Поставки союзника', `${POWERS[X].name} бесплатно поставляет нам: ${RES[k].short}, +${n} ед.`, null, tag);
+    Bus.emit('stateChanged');
+    return { ok: true, msg: `Поставки: ${RES[k].short} +${n}` };
+  },
+  stopGiveRes(tag, k) {
+    const X = this.cur, S = this.S;
+    const t = this.contracts().find(t => t.buyer === tag && t.seller === X && t.res === k && t.price === 0);
+    if (!t) return this.fail('Поставок нет');
+    if (t.n > 1) t.n--; else S.trade = this.contracts().filter(x => x !== t);
+    S.tradeSeq = (S.tradeSeq || 0) + 1;
+    Bus.emit('stateChanged');
+    return { ok: true };
   }
 });
 
