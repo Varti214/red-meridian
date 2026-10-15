@@ -1858,3 +1858,15 @@ body.assist-on .tb-clock { position: relative; }
 .ping-menu button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: none; color: #fff; border: 0; border-left: 3px solid var(--pc); border-radius: 3px; font: 600 12.5px var(--font-c); cursor: pointer; text-align: left; }
 .ping-menu button:hover { background: rgba(255, 255, 255, 0.08); }
 .ping-menu svg { width: 14px; height: 14px; color: var(--pc); }
+
+/* ---------- Обучение ---------- */
+.tut-box { position: fixed; z-index: 400; width: min(380px, calc(100vw - 16px)); padding: 14px 16px 12px; border: 1px solid rgba(227, 180, 72, 0.6); border-radius: 6px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7); background: rgba(10, 15, 22, 0.97); }
+.tut-k { font: 600 10.5px var(--font-c); text-transform: uppercase; letter-spacing: 0.12em; color: var(--gold-2); }
+.tut-box h3 { margin: 4px 0 6px; font: 700 18px/1.2 var(--font-c); }
+.tut-box p { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: #d3dbe5; }
+.tut-box kbd { padding: 0 5px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 3px; font: 600 11px var(--font-c); }
+.tut-act { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.tut-act [data-tut="skip"] { margin-right: auto; }
+.tut-target { outline: 2px solid var(--gold-2) !important; outline-offset: 3px; animation: tutPulse 1.2s ease-in-out infinite; border-radius: 4px; }
+@keyframes tutPulse { 0%, 100% { outline-color: rgba(255, 213, 110, 1); } 50% { outline-color: rgba(255, 213, 110, 0.25); } }
+#map-root.tut-target { box-shadow: none !important; outline-offset: -6px; }

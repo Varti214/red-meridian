@@ -126,6 +126,7 @@ const UI = {
     this.renderAll();
     this.updateWindows();
     this.showChat();
+    this.maybeTutorial();
     this.updateTopbar();
     this.updateClock();
     this.setNetStatus(Net.mp ? 'ok' : 'off');
@@ -1800,6 +1801,7 @@ const UI = {
         ${slot('load', 'Загрузить сохранение', man, 'Ручных сохранений нет')}
         ${slot('loadauto', 'Загрузить автосохранение', auto, 'Автосохранений пока нет — они делаются каждые 30 дней')}`;
     }
+    html += `<button class="btn" data-m="tutorial">Обучение</button>`;
     html += `<button class="btn" data-m="help">Как играть</button>
         <button class="btn" data-m="sound">Звук: ${Sound.enabled ? 'включён' : 'выключен'}</button>
         <button class="btn" data-m="news">Новости на экране: ${this.newsModeName()}</button>
@@ -1818,6 +1820,7 @@ const UI = {
           if (k === 'load') { this.closeModal(m); return this.loadGame(false); }
           if (k === 'loadauto') { this.closeModal(m); return this.loadGame(true); }
           if (k === 'help') return this.openHelp();
+          if (k === 'tutorial') { this.closeModal(m); return this.startTutorial(); }
           if (k === 'sound') { Sound.toggle(); b.textContent = 'Звук: ' + (Sound.enabled ? 'включён' : 'выключен'); return; }
           if (k === 'notify') {
             this.notifyMode = this.quiet() ? 'all' : 'quiet';
